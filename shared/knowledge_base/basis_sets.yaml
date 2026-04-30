@@ -1,0 +1,84 @@
+# Recommended basis sets for different calculation types and codes
+
+recommended_basis_sets:
+  # For broken-symmetry DFT screening
+  bs_dft:
+    default: "def2-TZVP"
+    alternatives: ["def2-SVP", "def2-TZVPD", "cc-pVTZ"]
+    notes: "def2-TZVP is standard for BS-DFT on TM clusters"
+
+  # For Hartree-Fock / initial screening
+  uhf_screening:
+    default: "def2-SVP"
+    alternatives: ["cc-pVDZ", "6-31G*"]
+    notes: "Smaller basis for rapid UHF screening of many configurations"
+
+  # For coupled cluster calculations
+  coupled_cluster:
+    default: "cc-pVDZ"
+    alternatives: ["cc-pVTZ", "def2-TZVP", "ano-rcc-vdzp"]
+    notes: "cc-pVDZ for initial CC; extrapolation to CBS with cc-pVTZ"
+
+  # For CASSCF / DMRG
+  casscf_dmrg:
+    default: "cc-pVDZ"
+    alternatives: ["ano-rcc-vdzp", "def2-TZVP"]
+    notes: "Active space methods less sensitive to basis; cc-pVDZ standard"
+
+  # For the LLDUC FeMo-co model specifically
+  femoco_llduc:
+    basis: "cc-pVDZ"
+    ecp: null
+    notes: "All-electron cc-pVDZ as in Li et al. 2019"
+
+# Common DFT functionals for BS-DFT
+recommended_functionals:
+  bs_dft:
+    default: "B3LYP"
+    alternatives: ["TPSSh", "TPSS-D3", "BP86", "PBE0"]
+    notes: "B3LYP and TPSSh most common for TM clusters; sensitive to functional choice"
+
+# Dispersion corrections
+dispersion:
+  default: "D3BJ"
+  alternatives: ["D3", "D4"]
+
+# Preset configurations for quick setup
+presets:
+  chan_2019:
+    description: "Chan 2019 FeMo-co paper settings"
+    basis:
+      Fe: "def2-TZVP"
+      Mo: "def2-TZVP"
+      S: "def2-TZVP"
+      C: "def2-SVP"
+      H: "def2-SVP"
+      O: "def2-SVP"
+      N: "def2-SVP"
+    relativistic: "sf-x2c"
+    solvation: "ddcosmo"
+    solvation_epsilon: 4.0
+    functional: "B3LYP"
+    reference: "Chan et al. 2019, DOI: 10.1021/acs.inorgchem.9b01273"
+
+  fast_default:
+    description: "Fast testing configuration (small basis, no corrections)"
+    basis:
+      default: "def2-SVP"
+    relativistic: "none"
+    solvation: "none"
+    functional: "B3LYP"
+    reference: "APEX internal default"
+
+  ano_rcc:
+    description: "ANO-RCC basis (common for transition metal spectroscopy)"
+    basis:
+      Fe: "ano-rcc-vdzp"
+      Mo: "ano-rcc-vdzp"
+      S: "ano-rcc-vdzp"
+      C: "ano-rcc-vdz"
+      H: "ano-rcc-vdz"
+    relativistic: "dkh"
+    solvation: "none"
+    functional: "B3LYP"
+    reference: "General TM cluster calculations"

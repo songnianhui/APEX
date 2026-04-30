@@ -1,0 +1,32 @@
+# APEX_Filter settings for [Fe2S2H4]3-
+#
+# Intended use:
+#   1. Run `apex-cas scf`
+#   2. Run `apex-cas buildcas`
+#   3. Run `apex-cas fcidump`
+#   4. Run `apex-filter load`
+#   5. Continue with `enumerate -> uhf -> ...`
+
+apex_cas_case_dir: examples/fe2s2h4
+structure_path: inputs/fe2s2h4.xyz
+cluster_info_path: inputs/fe2s2h4_cluster_info.yaml
+fcidump_path: outputs/fcidump/FCIDUMP.*
+
+charge: -3
+spin: 0.5
+symmetry_group: "C1"
+reduction_symmetry: "C1"
+config_reduction_mode: "none"
+
+scf_method: "uks"
+xc_functional: "BP86"
+basis_set_default: "def2-TZVP"
+relativistic: "sf-x2c"
+solvation_model: "none"
+
+filtration:
+  style: "minimal"
+  n_final: 4
+  code: "pyscf"
+
+workdir: examples/fe2s2h4/filter_output

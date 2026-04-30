@@ -1,0 +1,52 @@
+# APEX_Filter Step-1 load 配置模板
+# 复制此文件，取消注释并修改字段，然后运行：
+#   apex-filter load --config my_settings.yaml --session <filter_session_dir>
+#
+# 这个文件现在只负责：
+# - 定位 APEX_CAS case / FCIDUMP / cluster_info
+# - 指定 cluster/family/benchmark 元数据
+# - 记录上游 APEX_CAS 计算 provenance
+#
+# Step 2 及之后的逐步计算控制：
+# - enumerate / uhf / ccsd / ccsd-t / ccsdt / dmrg-basis / dmrg / fno-uccsdtq
+# 统一放在 `filter_session/method_controls.yaml` 中管理。
+
+# ── APEX_CAS 输出目录（必须）────────────────────────────────
+# apex_cas_case_dir: null    # APEX_CAS case 目录路径
+                              # 包含 outputs/scf/*.chk, outputs/orbitals/cas_data.h5,
+                              # outputs/fcidump/FCIDUMP
+
+# ── 集群信息（覆盖从 mol 重建的默认值）────────────────────────
+# charge: -2                  # 总电荷
+# spin: 0.0                   # 目标总自旋 S（如 0.0 = 单重态）
+# symmetry_group: "C2"        # 近似点群（C1, C2, C3, D2h 等）
+# reduction_symmetry: "C2"    # 下游对称性约化真正使用的 Cn 标签
+# family_scheme: ""           # family 定义方案，例如 literature_fe4s4_cubane
+# benchmark_profile: ""       # 文献对齐枚举配置，例如 chan_femoco_2026_llduc
+# config_reduction_mode: "none" # "none"（默认）| "heuristic"
+# structure_path: null        # 可选：显式指定原始结构文件，供 APEX_Filter 重新 parse_structure()
+# cluster_info_path: null     # 可选：显式指定 cluster_info.yaml，优先于自动角色/电荷判断
+
+# ── FCIDUMP（建议显式指定，避免自动探测歧义）──────────────────
+# fcidump_path: "outputs/fcidump/FCIDUMP.*"  # 建议显式指定；支持通配符并自动跳过 .ecore/.json
+# fcidump_ecore_path: null    # 显式指定 .ecore sidecar 路径
+
+# ── 上游 APEX_CAS 计算 provenance（可选覆盖）──────────────────
+# 这些字段主要用于记录/复述上游 APEX_CAS case 的有效设置。
+# 在当前 active-space FCIDUMP route 下，它们不等于“在 APEX_Filter 内重新建一个新 AO 基组”。
+#
+# 只有在你确实需要覆盖 provenance 展示或 sidecar 合并结果时才填写。
+# preset: "default"           # "default" | "fast"
+# scf_method: "uks"
+# xc_functional: "B3LYP"
+# basis_set_default: "def2-TZVP"
+# basis_per_element:
+#   Fe: "tzp-dkh"
+#   S:  "tzp-dkh"
+#   C:  "def2-SVP"
+#   H:  "def2-SVP"
+# relativistic: "sf-x2c"
+# solvation_model: "ddcosmo"
+# solvation_epsilon: 4.0
+# conv_tol: 1.0e-8
+# max_cycle: 2000

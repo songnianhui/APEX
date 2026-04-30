@@ -1,0 +1,77 @@
+# [Fe2S2H4]^{3-} CAS Settings
+# Reduced Fe(III)-Fe(II) dimer, ground state S=1/2
+# H- terminal ligands replace SCH3- for minimal model validation
+#
+# Charge balance:
+#   Total charge = -3
+#   Ligands: 2 x S(2-) + 4 x H(-) = -8
+#   Metal oxidation sum = -3 - (-8) = +5 -> Fe(III) + Fe(II)
+#
+# Active space (expected, auto-determined by UNO NOON):
+#   ~CAS(23e, 16o) = 10 Fe-3d + 6 bridging-S-3p
+#   (smaller than full [Fe2S2(SCH3)4]3- which has CAS(31e, 20o)
+#    due to absence of terminal S 3p orbitals)
+#
+# Reference: Li & Chan, JCTC 13, 2681 (2017) — Fe2S2 model
+#            Zhai et al., arXiv:2601.04621 (2026) — screening pipeline
+
+charge: -3
+spin: 0.5 # CAS target: S=1/2 doublet
+scf_spin: 4.5 # SCF reference: S=9/2 high-spin (Fe(III)-Fe(II) ferromagnetic)
+cluster_info_path: "fe2s2h4_cluster_info.yaml"
+
+scf_method: "uks"
+xc_functional: "BP86"
+
+# Chan 2017: tzp-dkh for all atoms with sf-X2C
+basis_set_default: "def2-TZVP" #"tzp-dkh"
+
+relativistic: "sf-x2c"
+solvation_model: "none" # Chan 2017: no solvation for Fe4S4
+
+conv_tol: 1.0e-10 # Chan 2017: tight convergence
+max_cycle: 100
+scf_verbose: 4
+
+# ── SCF convergence helpers ────────────────────────────────────
+init_guess: "atom"
+# scf_damp: 0.3
+# scf_level_shift: 0.0
+diis_space: 8
+
+# Fractional occupation: smooth HOMO oscillation for degenerate systems
+# frac_occ: true
+#Fermi/Gauss smearing: thermal broadening near Fermi surface
+# smearing_method: "fermi" # "none" | "fermi" | "gauss"
+# smearing_sigma: 0.01 # smearing width (Hartree), adjustable 0.001-0.05
+# Stage 3: Newton-Raphson (second-order SCF) refinement
+# Activated when Stage 2 fails to converge
+scf_stage1_rough: true
+scf_stage3_newton: true
+newton_max_cycle: 10
+newton_conv_tol: 1.0e-12
+
+localization_method: "pm"
+# ── Pipek-Mezey localization parameters ──────────────────────
+# Only effective when localization_method is "pm".
+pm_pop_method: "Mulliken" # PM 1989 原始定义基于 Mulliken 布居（PySCF 默认 meta-lowdin）
+pm_conv_tol: 1.0e-8 # convergence threshold
+pm_max_cycle: 500 # max iterations
+pm_init_guess: "atomic" # "atomic" | null (use mo_coeff directly)
+pm_exponent: 2 # PM norm power: 2 or 4
+
+cpt_cas_type: "uno" # "uno" | "uno_type2" | "luo" | "avas" | "alpha_sl"
+#                                 # "uno": UNO (split-localized natural orbitals)
+#                                 # "luo": LUO (alpha/beta separately localized)
+#                                 # "avas": AVAS (projection-based, requires additional config)
+#                                 # "alpha_sl": Chan 2014 alpha split-localization
+
+# ── Orbital visualization ───────────────────────────────────────
+generate_cubes: true # false = skip cube file generation
+cube_grid: "120x120x120" # cube grid resolution
+pw_plot_threshold:
+  0.005
+  # save cube+PNG for orbitals with proj_weight >= this threshold
+  # (unset = active space only, default)
+render_png: true # false = skip orbital HTML gallery generation
+png_isovalue: 0.05 # isosurface threshold for rendering

@@ -1,0 +1,17 @@
+apex_step,apex_theory,observable,our_value,chan_reference,chan_value,comparison_note,our_minus_chan
+step3,UHF,s2,4.893026377727,Table 5 UHF s2,4.893150,direct,-1.23622273e-04
+step3,UHF,two_s,3.535648305700,Table 5 UHF 2<S>,3.535703,direct,-5.46943000e-05
+step3,UHF,two_sz_fe1,4.152152647689,Table 5 UHF 2Sz(Fe1),-4.197729,global_sign_flip,+4.55763523e-02
+step3,UHF,two_sz_fe2,-4.152950038001,Table 5 UHF 2Sz(Fe2),4.200378,global_sign_flip,-4.74279620e-02
+step4,UCCSD,s2,3.601070246689,Table 5 UCCSD s2,3.601338,direct,-2.67753311e-04
+step4,UCCSD,two_s,2.924828784387,Table 5 UCCSD 2<S>,2.924965,direct,-1.36215613e-04
+step4,UCCSD,two_sz_fe1,3.879400190395,Table 5 UCCSD 2Sz(Fe1),-3.916799,global_sign_flip,+3.73988096e-02
+step4,UCCSD,two_sz_fe2,-3.880450615359,Table 5 UCCSD 2Sz(Fe2),3.919647,global_sign_flip,-3.91963846e-02
+step5,UCCSD(T),s2,3.104748611002,Table 5 UCCSD(T) s2,3.104838,direct,-8.93889983e-05
+step5,UCCSD(T),two_s,2.663194568134,Table 5 UCCSD(T) 2<S>,2.663243,direct,-4.84318659e-05
+step5,UCCSD(T),two_sz_fe1,3.774314074843,Table 5 UCCSD(T) 2Sz(Fe1),-3.818287,global_sign_flip,+4.39729252e-02
+step5,UCCSD(T),two_sz_fe2,-3.775284870055,Table 5 UCCSD(T) 2Sz(Fe2),3.821016,global_sign_flip,-4.57311299e-02
+step6,UCCSDT,s2,2.720002081625,Table 5 UCCSDT s2,2.719797,direct,+2.05081625e-04
+step6,UCCSDT,two_s,2.446738795804,Table 5 UCCSDT 2<S>,2.446620,direct,+1.18795804e-04
+step6,UCCSDT,two_sz_fe1,3.716049340039,Table 5 UCCSDT 2Sz(Fe1),-3.763482,global_sign_flip,+4.74326600e-02
+step6,UCCSDT,two_sz_fe2,-3.717048978685,Table 5 UCCSDT 2Sz(Fe2),3.766248,global_sign_flip,-4.91910213e-02

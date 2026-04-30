@@ -1,0 +1,50 @@
+{
+  "_file_role": "Benchmark inventory for Fe4S4(SCH3)4 Chan-reference data currently recoverable from local literature and reference assets.",
+  "_comment": "Unlike Fe2S2 in Chan 2026, the local Fe4S4 reference currently provides FCIDUMP and figure-based benchmark information rather than a clean table of absolute energies and observables. This file records what is directly extractable and what remains unavailable without figure digitization or additional source material.",
+  "source": {
+    "paper": "2017-Spin-Projected Matrix Product States: Versatile Tool for Strongly Correlated Systems",
+    "pages": "30-32",
+    "figure": "Figure 10",
+    "system": "[Fe4S4(SCH3)4]^{2-}",
+    "active_space": "CAS(54e,36o)"
+  },
+  "fcidump_metadata": {
+    "path": "/Users/snh/Projects/APEX/examples/fe4s4/chan_ref/fe4s4",
+    "norb": 36,
+    "nelec": 54,
+    "ms2": 0,
+    "orbsym_all_one": true,
+    "isym": 1
+  },
+  "directly_extractable_benchmark_info": {
+    "initial_state_count": 24,
+    "interpretation": "24 physically meaningful broken-symmetry initial guesses formed by placing spin-up/down Fe(II) and spin-up/down Fe(III) among four iron sites.",
+    "spmps_smallD": {
+      "method": "SP-MPS",
+      "bond_dimension": 200,
+      "target_spin": "singlet",
+      "available_observables": [
+        "spin-spin correlation patterns among the four irons for all 24 converged states",
+        "relative energies of the 24 converged SP-MPS states"
+      ],
+      "energy_reference": "relative to the lowest SP-MPS energy (the 5th state)"
+    },
+    "sa_mps_check": {
+      "method": "state-averaged SA-MPS",
+      "bond_dimension": 2500,
+      "purpose": "used in the paper to verify that the low-energy spin-spin correlation pattern identified by SP-MPS(D=200) matches the larger-D spin-adapted result for the lowest two states"
+    },
+    "pattern_count": 3,
+    "qualitative_conclusion": "The 24 converged SP-MPS states cluster into three distinct spin-spin correlation patterns; the blue-bar pattern in Figure 10(b) corresponds to the lowest-energy manifold and matches the larger-D SA-MPS ground-state pattern."
+  },
+  "not_yet_recovered_as_machine_readable_numbers": {
+    "absolute_total_energies": true,
+    "per_state_relative_energy_values": true,
+    "per_state_spin_spin_correlation_matrix_values": true,
+    "s2_values": true,
+    "notes": [
+      "The local PDF text gives qualitative description of Figure 10 but does not provide a tabulated numeric list of the 24 relative energies.",
+      "Reliable recovery of the 24 relative-energy bars would require figure digitization or an auxiliary numeric source."
+    ]
+  }
+}

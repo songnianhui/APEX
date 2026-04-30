@@ -1,0 +1,31 @@
+# APEX_Filter settings for [Fe2S2(SCH3)4]3- (reduced)
+#
+# Intended use:
+#   1. Run `apex-cas prepare`
+#   2. Run `apex-cas scf`
+#   3. Run `apex-cas buildcas`
+#   4. Edit `selection.txt` as needed
+#   5. Run `apex-cas fcidump`
+#   6. Run `apex-filter load`
+#
+# Step-2-and-later numerical / selection controls now live in:
+#   filter_session/method_controls.yaml
+
+apex_cas_case_dir: examples/fe2s2_red
+structure_path: inputs/fe2s2_red.xyz
+cluster_info_path: inputs/fe2s2_red_cluster_info.yaml
+fcidump_path: outputs/fcidump/FCIDUMP.*
+
+charge: -3
+spin: 0.5
+symmetry_group: "C1"
+reduction_symmetry: "C1"
+family_scheme: "literature_fe2s2_dimer"
+benchmark_profile: ""
+config_reduction_mode: "none"
+
+scf_method: "uks"
+xc_functional: "BP86"
+basis_set_default: "tzp-dkh"
+relativistic: "sf-x2c"
+solvation_model: "none"

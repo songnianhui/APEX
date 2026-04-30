@@ -1,0 +1,406 @@
+# Transition metal properties for active space analysis
+# Reference: standard inorganic chemistry + Zhai et al. 2026
+
+# ------------------------------------------------------------------
+# 3d transition metals
+# ------------------------------------------------------------------
+Sc:
+  row: 3d
+  atomic_number: 21
+  electron_config: "[Ar] 3d1 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+3]
+  high_spin_states:
+    Sc3+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.70
+
+Ti:
+  row: 3d
+  atomic_number: 22
+  electron_config: "[Ar] 3d2 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2, +3, +4]
+  high_spin_states:
+    Ti2+: {d_count: 2, S: 1, unpaired: 2}
+    Ti3+: {d_count: 1, S: 0.5, unpaired: 1}
+    Ti4+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.60
+
+V:
+  row: 3d
+  atomic_number: 23
+  electron_config: "[Ar] 3d3 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2, +3, +4, +5]
+  high_spin_states:
+    V2+: {d_count: 3, S: 1.5, unpaired: 3}
+    V3+: {d_count: 2, S: 1, unpaired: 2}
+    V4+: {d_count: 1, S: 0.5, unpaired: 1}
+    V5+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.53
+
+Cr:
+  row: 3d
+  atomic_number: 24
+  electron_config: "[Ar] 3d5 4s1"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2, +3, +6]
+  high_spin_states:
+    Cr2+: {d_count: 4, S: 2, unpaired: 4}
+    Cr3+: {d_count: 3, S: 1.5, unpaired: 3}
+    Cr6+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.39
+
+Mn:
+  row: 3d
+  atomic_number: 25
+  electron_config: "[Ar] 3d5 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2, +3, +4, +7]
+  high_spin_states:
+    Mn2+: {d_count: 5, S: 2.5, unpaired: 5}
+    Mn3+: {d_count: 4, S: 2, unpaired: 4}
+    Mn4+: {d_count: 3, S: 1.5, unpaired: 3}
+    Mn7+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.39
+
+Fe:
+  row: 3d
+  atomic_number: 26
+  electron_config: "[Ar] 3d6 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2, +3]
+  high_spin_states:
+    Fe2+: {d_count: 6, S: 2, unpaired: 4}
+    Fe3+: {d_count: 5, S: 2.5, unpaired: 5}
+  covalent_radius_angstrom: 1.32
+
+Co:
+  row: 3d
+  atomic_number: 27
+  electron_config: "[Ar] 3d7 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2, +3]
+  high_spin_states:
+    Co2+: {d_count: 7, S: 1.5, unpaired: 3}
+    Co3+: {d_count: 6, S: 2, unpaired: 4}  # high-spin; low-spin S=0
+  low_spin_states:
+    Co3+: {d_count: 6, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.26
+
+Ni:
+  row: 3d
+  atomic_number: 28
+  electron_config: "[Ar] 3d8 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+1, +2, +3]
+  high_spin_states:
+    Ni1+: {d_count: 9, S: 0.5, unpaired: 1}
+    Ni2+: {d_count: 8, S: 1, unpaired: 2}
+    Ni3+: {d_count: 7, S: 1.5, unpaired: 3}
+  covalent_radius_angstrom: 1.24
+
+Cu:
+  row: 3d
+  atomic_number: 29
+  electron_config: "[Ar] 3d10 4s1"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+1, +2]
+  high_spin_states:
+    Cu1+: {d_count: 10, S: 0, unpaired: 0}
+    Cu2+: {d_count: 9, S: 0.5, unpaired: 1}
+  covalent_radius_angstrom: 1.32
+
+Zn:
+  row: 3d
+  atomic_number: 30
+  electron_config: "[Ar] 3d10 4s2"
+  active_orbitals: ["3d"]
+  active_orbital_types: ["3d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2]
+  high_spin_states:
+    Zn2+: {d_count: 10, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.22
+
+# ------------------------------------------------------------------
+# 4d transition metals
+# ------------------------------------------------------------------
+Y:
+  row: 4d
+  atomic_number: 39
+  electron_config: "[Kr] 4d1 5s2"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+3]
+  high_spin_states:
+    Y3+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.90
+
+Zr:
+  row: 4d
+  atomic_number: 40
+  electron_config: "[Kr] 4d2 5s2"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+4]
+  high_spin_states:
+    Zr4+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.75
+
+Nb:
+  row: 4d
+  atomic_number: 41
+  electron_config: "[Kr] 4d4 5s1"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+3, +5]
+  high_spin_states:
+    Nb3+: {d_count: 2, S: 1, unpaired: 2}
+    Nb5+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.64
+
+Mo:
+  row: 4d
+  atomic_number: 42
+  electron_config: "[Kr] 4d5 5s1"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+3, +4, +5, +6]
+  high_spin_states:
+    Mo3+: {d_count: 3, S: 0.5, unpaired: 1}  # typically low-spin in octahedral
+    Mo4+: {d_count: 2, S: 1, unpaired: 2}
+    Mo5+: {d_count: 1, S: 0.5, unpaired: 1}
+    Mo6+: {d_count: 0, S: 0, unpaired: 0}
+  notes: "Mo(III) in FeMo-co is low-spin S=1/2 due to strong-field ligands"
+  covalent_radius_angstrom: 1.54
+
+Tc:
+  row: 4d
+  atomic_number: 43
+  electron_config: "[Kr] 4d5 5s2"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+4, +7]
+  high_spin_states:
+    Tc4+: {d_count: 3, S: 1.5, unpaired: 3}
+    Tc7+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.47
+
+Ru:
+  row: 4d
+  atomic_number: 44
+  electron_config: "[Kr] 4d7 5s1"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2, +3, +4]
+  high_spin_states:
+    Ru2+: {d_count: 6, S: 0, unpaired: 0}  # typically low-spin
+    Ru3+: {d_count: 5, S: 0.5, unpaired: 1}
+    Ru4+: {d_count: 4, S: 1, unpaired: 2}
+  covalent_radius_angstrom: 1.46
+
+Rh:
+  row: 4d
+  atomic_number: 45
+  electron_config: "[Kr] 4d8 5s1"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+1, +3]
+  high_spin_states:
+    Rh1+: {d_count: 8, S: 0, unpaired: 0}
+    Rh3+: {d_count: 6, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.42
+
+Pd:
+  row: 4d
+  atomic_number: 46
+  electron_config: "[Kr] 4d10"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [0, +2, +4]
+  high_spin_states:
+    Pd0: {d_count: 10, S: 0, unpaired: 0}
+    Pd2+: {d_count: 8, S: 0, unpaired: 0}
+    Pd4+: {d_count: 6, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.39
+
+Ag:
+  row: 4d
+  atomic_number: 47
+  electron_config: "[Kr] 4d10 5s1"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+1]
+  high_spin_states:
+    Ag1+: {d_count: 10, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.45
+
+Cd:
+  row: 4d
+  atomic_number: 48
+  electron_config: "[Kr] 4d10 5s2"
+  active_orbitals: ["4d"]
+  active_orbital_types: ["4d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+2]
+  high_spin_states:
+    Cd2+: {d_count: 10, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.44
+
+La:
+  row: 5d
+  atomic_number: 57
+  electron_config: "[Xe] 5d1 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+3]
+  high_spin_states:
+    La3+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.87
+
+Hf:
+  row: 5d
+  atomic_number: 72
+  electron_config: "[Xe] 4f14 5d2 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+4]
+  high_spin_states:
+    Hf4+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.75
+
+Ta:
+  row: 5d
+  atomic_number: 73
+  electron_config: "[Xe] 4f14 5d3 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+5]
+  high_spin_states:
+    Ta5+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.70
+
+W:
+  row: 5d
+  atomic_number: 74
+  electron_config: "[Xe] 4f14 5d4 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+4, +5, +6]
+  high_spin_states:
+    W4+: {d_count: 2, S: 1, unpaired: 2}
+    W5+: {d_count: 1, S: 0.5, unpaired: 1}
+    W6+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.62
+
+Re:
+  row: 5d
+  atomic_number: 75
+  electron_config: "[Xe] 4f14 5d5 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+4, +7]
+  high_spin_states:
+    Re4+: {d_count: 3, S: 1.5, unpaired: 3}
+    Re7+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.51
+
+Os:
+  row: 5d
+  atomic_number: 76
+  electron_config: "[Xe] 4f14 5d6 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+4, +8]
+  high_spin_states:
+    Os4+: {d_count: 4, S: 2, unpaired: 4}
+    Os8+: {d_count: 0, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.44
+
+Ir:
+  row: 5d
+  atomic_number: 77
+  electron_config: "[Xe] 4f14 5d7 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+1, +3, +4]
+  high_spin_states:
+    Ir1+: {d_count: 8, S: 0, unpaired: 0}
+    Ir3+: {d_count: 6, S: 0, unpaired: 0}
+    Ir4+: {d_count: 5, S: 0.5, unpaired: 1}
+  covalent_radius_angstrom: 1.41
+
+Pt:
+  row: 5d
+  atomic_number: 78
+  electron_config: "[Xe] 4f14 5d9 6s1"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [0, +2, +4]
+  high_spin_states:
+    Pt0: {d_count: 10, S: 0, unpaired: 0}
+    Pt2+: {d_count: 8, S: 0, unpaired: 0}
+    Pt4+: {d_count: 6, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.36
+
+Au:
+  row: 5d
+  atomic_number: 79
+  electron_config: "[Xe] 4f14 5d10 6s1"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+1, +3]
+  high_spin_states:
+    Au1+: {d_count: 10, S: 0, unpaired: 0}
+    Au3+: {d_count: 8, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.36
+
+Hg:
+  row: 5d
+  atomic_number: 80
+  electron_config: "[Xe] 4f14 5d10 6s2"
+  active_orbitals: ["5d"]
+  active_orbital_types: ["5d"]
+  n_active_orbitals: 5
+  common_oxidation_states: [+1, +2]
+  high_spin_states:
+    Hg1+: {d_count: 10, S: 0, unpaired: 0}
+    Hg2+: {d_count: 10, S: 0, unpaired: 0}
+  covalent_radius_angstrom: 1.32

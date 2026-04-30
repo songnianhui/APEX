@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""
+BLOCK2 DMRG calculation using pyblock2 driver.
+Generated from template: block2_dmrg.py.j2
+Label: {{ label }}
+"""
+
+import os
+import numpy as np
+from pyscf import gto, scf, lib
+
+from pyblock2.driver.core import DMRGDriver, SymmetryTypes
+from pyblock2._pyscf.ao2mo import integrals as itg
+
+# ---------------------------------------------------------------------------
+# Molecule definition
+# ---------------------------------------------------------------------------
+mol = gto.M(
+    atom="""{{ geometry }}""",
+    basis="{{ basis_set }}",
+    charge={{ charge }},
+    spin={{ spin }},
+    verbose=4,
+    output="{{ label }}_dmrg.out",
+    symmetry=False,
+)
+
+print("=" * 70)
+print("BLOCK2 DMRG (pyblock2 driver)")
+print("Label          : {{ label }}")
+print("Basis          : {{ basis_set }}")
+print("Charge         : {{ charge }}")
+print("Spin (2S+1)    : {{ spin }}")
+print("N electrons    : {{ n_electrons }}")
+print("N orbitals     : {{ n_orbitals }}")
+print("=" * 70)
+
+# ---------------------------------------------------------------------------
+# Active space definition
+# ---------------------------------------------------------------------------
+{% if active_space is defined %}
+cas_n_elec = {{ active_space.n_electrons }}
+cas_n_orb = {{ active_space.n_orbitals }}
+print(f"Active space   : CAS({cas_n_elec}, {cas_n_orb})")
+{% else %}
+raise ValueError("active_space must be defined for DMRG calculation")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# DMRG parameters
+# ---------------------------------------------------------------------------
+{% if bond_dim is defined %}
+bond_dim = {{ bond_dim }}
+{% else %}
+bond_dim = 500
+{% endif %}
+print(f"Bond dimension : {bond_dim}")
+
+{% if config is defined %}
+dmrg_num_sweeps = {{ config.get('dmrg_num_sweeps', 2000) | default(2000) }}
+dmrg_conv_tol = {{ config.get('dmrg_conv_tol', 1e-8) | default(1e-8) }}
+dmrg_nthreads = {{ config.get('dmrg_nthreads', 4) | default(4) }}
+dmrg_scratch = "{{ config.get('scratch_dir', './scratch_dmrg') | default('./scratch_dmrg') }}"
+dmrg_stack_mem = {{ config.get('stack_mem', 2 * 1024**3) | default(2147483648) }}
+{% else %}
+dmrg_num_sweeps = 2000
+dmrg_conv_tol = 1e-8
+dmrg_nthreads = 4
+dmrg_scratch = "./scratch_dmrg"
+dmrg_stack_mem = 2 * 1024**3  # 2 GB
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# UHF reference
+# ---------------------------------------------------------------------------
+{% if config is defined and config.uhf_npz is defined %}
+# Load pre-computed UHF MOs from previous level (skip SCF)
+print("\n>>> Loading UHF MOs from: {{ config.uhf_npz }}")
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+data = np.load("{{ config.uhf_npz }}")
+mf.mo_coeff = (data["mo_coeff_a"], data["mo_coeff_b"])
+mf.mo_occ = (data["mo_occ_a"], data["mo_occ_b"])
+mf.mo_energy = (data["mo_energy_a"], data["mo_energy_b"])
+mf.e_tot = float(data["energy"])
+mf.converged = bool(data["converged"])
+uhf_energy = mf.e_tot
+if not mf.converged:
+    print("WARNING: UHF from npz was not converged! Continuing anyway.")
+print(f"Loaded UHF Energy: {uhf_energy:.12f}")
+{% else %}
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+
+{% if config is defined and config.density_fitting is defined and config.density_fitting %}
+mf = mf.density_fit(auxbasis="{{ config.get('aux_basis', 'def2-universal-jfit') }}")
+{% endif %}
+
+print("\n>>> Running UHF reference ...")
+uhf_energy = mf.kernel()
+if not mf.converged:
+    print("WARNING: UHF did not converge! Continuing anyway.")
+print(f"UHF Energy: {uhf_energy:.12f}")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# Compute frozen core
+# ---------------------------------------------------------------------------
+nocc_a = int(np.sum(mf.mo_occ[0] > 0))
+nocc_b = int(np.sum(mf.mo_occ[1] > 0))
+norb_total = mf.mo_occ[0].size
+
+{% if config is defined and config.ncore is defined %}
+ncore = {{ config.ncore }}
+{% else %}
+# Default: freeze core orbitals (1s for first-row, up to Ar core for TMs)
+# For transition metal clusters, freeze everything below the valence d/p shell
+ncore = 0
+# Heuristic: count doubly-occupied orbitals beyond the active space
+n_total_elec = nocc_a + nocc_b
+ncore = max(0, (n_total_elec - cas_n_elec) // 2)
+{% endif %}
+print(f"Core orbitals  : {ncore}")
+print(f"Alpha occ/vir  : {nocc_a}/{norb_total - nocc_a}")
+print(f"Beta  occ/vir  : {nocc_b}/{norb_total - nocc_b}")
+
+# ---------------------------------------------------------------------------
+# Get active-space integrals via pyblock2 PySCF interface
+# ---------------------------------------------------------------------------
+print("\n>>> Computing active-space integrals ...")
+ncas, n_elec, spin, ecore, h1e, g2e, orb_sym = itg.get_uhf_integrals(
+    mf, ncore=ncore, ncas=cas_n_orb
+)
+print(f"  Active space from integrals: ({n_elec}e, {ncas}o)")
+print(f"  Spin = {spin}, Core energy = {ecore:.12f}")
+
+# ---------------------------------------------------------------------------
+# Initialize DMRG driver
+# ---------------------------------------------------------------------------
+os.makedirs(dmrg_scratch, exist_ok=True)
+print(f"\n>>> Initializing DMRG driver (scratch={dmrg_scratch}) ...")
+print(f"  Symmetry: SZ (unrestricted)")
+print(f"  Threads: {dmrg_nthreads}")
+print(f"  Stack memory: {dmrg_stack_mem / 1024**3:.1f} GB")
+
+driver = DMRGDriver(
+    scratch=dmrg_scratch,
+    symm_type=SymmetryTypes.SZ,
+    n_threads=dmrg_nthreads,
+    stack_mem=dmrg_stack_mem,
+)
+
+driver.initialize_system(
+    n_sites=ncas,
+    n_elec=n_elec,
+    spin=spin,
+    orb_sym=orb_sym,
+)
+
+# ---------------------------------------------------------------------------
+# Build MPO (Matrix Product Operator)
+# ---------------------------------------------------------------------------
+print("\n>>> Building QC-MPO ...")
+mpo = driver.get_qc_mpo(h1e=h1e, g2e=g2e, ecore=ecore)
+
+# ---------------------------------------------------------------------------
+# Sweep schedule
+# ---------------------------------------------------------------------------
+{% if config is defined and config.sweep_schedule is defined %}
+# Custom sweep schedule from config
+sweep_schedule = {{ config.sweep_schedule }}
+bond_dims = [s[0] for s in sweep_schedule]
+noises = [s[1] for s in sweep_schedule]
+thrds = [s[2] for s in sweep_schedule]
+{% else %}
+# Default adaptive schedule: ramp up bond dimension
+bond_dims = []
+noises = []
+thrds = []
+ramp_schedule = [
+    (min(50, bond_dim),    1e-4,  1e-6),
+    (min(100, bond_dim),   5e-5,  1e-7),
+    (min(200, bond_dim),   1e-5,  1e-8),
+    (min(500, bond_dim),   1e-6,  1e-9),
+]
+for bd, noise, thrd in ramp_schedule:
+    for _ in range(2):
+        bond_dims.append(bd)
+        noises.append(noise)
+        thrds.append(thrd)
+# Fill remaining sweeps at target bond dimension
+while len(bond_dims) < dmrg_num_sweeps:
+    bond_dims.append(bond_dim)
+    noises.append(1e-7)
+    thrds.append(dmrg_conv_tol)
+# Truncate to exact number of sweeps
+bond_dims = bond_dims[:dmrg_num_sweeps]
+noises = noises[:dmrg_num_sweeps]
+thrds = thrds[:dmrg_num_sweeps]
+{% endif %}
+
+print(f"\nSweep schedule ({len(bond_dims)} sweeps):")
+for i, (bd, noise, thrd) in enumerate(zip(bond_dims, noises, thrds)):
+    print(f"  Sweep {i+1:3d}: M={bd:5d}, noise={noise:.1e}, tol={thrd:.1e}")
+
+# ---------------------------------------------------------------------------
+# Run DMRG
+# ---------------------------------------------------------------------------
+print("\n>>> Running DMRG ...")
+ket = driver.get_random_mps(tag="GS", bond_dim=bond_dims[0], nroots=1)
+dmrg_energy = driver.dmrg(
+    mpo, ket,
+    n_sweeps=len(bond_dims),
+    bond_dims=bond_dims,
+    noises=noises,
+    thrds=thrds,
+    tol=dmrg_conv_tol,
+    iprint=1,
+)
+
+print(f"\n{'=' * 70}")
+print(f"UHF Reference Energy:  {uhf_energy:.12f}")
+print(f"DMRG Total Energy:     {dmrg_energy:.12f}")
+print(f"DMRG Correlation:      {dmrg_energy - uhf_energy:.12f}")
+print(f"DMRG Final Bond Dim:   {bond_dims[-1]}")
+print(f"{'=' * 70}")
+
+# Compute <S^2> from the DMRG wavefunction
+try:
+    ssq_value = driver.expectation(ket, driver.get_spin_square_mpo(), ket) / driver.get_mpo_amp()
+    print(f"<S^2> = {ssq_value:.6f}")
+except Exception:
+    ssq_value = None
+    print("Warning: could not compute <S^2> from DMRG")
+
+# ---------------------------------------------------------------------------
+# Extrapolation to infinite bond dimension (M -> inf)
+# ---------------------------------------------------------------------------
+{% if config is defined and config.extrapolation is defined and config.extrapolation %}
+print("\n>>> DMRG energy extrapolation (M -> inf) ...")
+# Run a second calculation with smaller bond dimension
+bond_dim_small = max(bond_dim // 2, 50)
+print(f"  Running additional DMRG with M={bond_dim_small} for extrapolation ...")
+
+driver2 = DMRGDriver(
+    scratch=os.path.join(dmrg_scratch, "extrap"),
+    symm_type=SymmetryTypes.SZ,
+    n_threads=dmrg_nthreads,
+    stack_mem=dmrg_stack_mem,
+)
+driver2.initialize_system(n_sites=ncas, n_elec=n_elec, spin=spin, orb_sym=orb_sym)
+mpo2 = driver2.get_qc_mpo(h1e=h1e, g2e=g2e, ecore=ecore)
+ket2 = driver2.get_random_mps(tag="GS", bond_dim=bond_dim_small, nroots=1)
+
+n_sweeps_extrap = max(dmrg_num_sweeps // 2, 4)
+bond_dims_extrap = [bond_dim_small] * n_sweeps_extrap
+noises_extrap = [1e-7] * n_sweeps_extrap
+thrds_extrap = [dmrg_conv_tol] * n_sweeps_extrap
+
+dmrg_energy_small = driver2.dmrg(
+    mpo2, ket2,
+    n_sweeps=n_sweeps_extrap,
+    bond_dims=bond_dims_extrap,
+    noises=noises_extrap,
+    thrds=thrds_extrap,
+    tol=dmrg_conv_tol,
+    iprint=1,
+)
+
+# Linear extrapolation: E(M) ≈ E_inf + A/M
+e_large = dmrg_energy
+e_small = dmrg_energy_small
+if abs(bond_dim - bond_dim_small) > 0:
+    e_extrapolated = (bond_dim * e_large - bond_dim_small * e_small) / (bond_dim - bond_dim_small)
+else:
+    e_extrapolated = e_large
+print(f"  E(M={bond_dim_small})   = {e_small:.12f}")
+print(f"  E(M={bond_dim})         = {e_large:.12f}")
+print(f"  E(extrapolated)         = {e_extrapolated:.12f}")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# Save results
+# ---------------------------------------------------------------------------
+save_dict = {
+    "uhf_energy": uhf_energy,
+    "dmrg_total": dmrg_energy,
+    "dmrg_corr": dmrg_energy - uhf_energy,
+    "dmrg_converged": True,
+    "bond_dim": bond_dims[-1],
+    "cas_n_elec": n_elec,
+    "cas_n_orb": ncas,
+    "ncore": ncore,
+    "mo_coeff_a": mf.mo_coeff[0],
+    "mo_coeff_b": mf.mo_coeff[1],
+}
+if ssq_value is not None:
+    save_dict["spin_sq"] = ssq_value
+
+{% if config is defined and config.extrapolation is defined and config.extrapolation %}
+save_dict["dmrg_extrapolated"] = e_extrapolated
+save_dict["dmrg_energy_small_m"] = e_small
+save_dict["bond_dim_small"] = bond_dim_small
+{% endif %}
+
+np.savez("{{ label }}_dmrg_results.npz", **{k: v for k, v in save_dict.items()})
+print(f"\nResults saved to {{ label }}_dmrg_results.npz")
+print("Done.")

@@ -1,0 +1,33 @@
+# APEX prepare cluster-info draft. Edit the formal fields, review the read-only fields.
+# Editable formal fields: user_label, role, charge, projection_role, bound_to, bridging_to, ligand_type
+# charge here means the integer charge label used for formal oxidation-state / ligand-charge analysis.
+# It is not a Mulliken, Lowdin, Bader, or other density-derived partial charge.
+# Valid role values: metal, bridging, terminal, interstitial, spectator
+# Valid projection_role values: metal_df, bridging_p, exclude
+# bound_to: single metal label such as Fe1. bridging_to: comma-separated metal labels such as "Fe1,Fe2".
+# Read-only review fields: display_contacts, neighbor_elements, auto_reason, note
+atom_index,xyz_serial,element,user_label,role,charge,projection_role,bound_to,bridging_to,ligand_type,display_contacts,neighbor_elements,auto_reason,note
+0,1,Fe,Fe1,metal,0,metal_df,,,,"S1,S2,S3,S4",Sx4,"auto metal center; bonded to S,S,S,S",auto-draft
+5,6,Fe,Fe2,metal,0,metal_df,,,,"S1,S2,S5,S6",Sx4,"auto metal center; bonded to S,S,S,S",auto-draft
+1,2,S,S1,bridging,-2,bridging_p,,"Fe1,Fe2",sulfide,"Fe1,Fe2",Fex2,"auto bridging atom; bridges Fe1,Fe2",auto-draft
+4,5,S,S2,bridging,-2,bridging_p,,"Fe1,Fe2",sulfide,"Fe1,Fe2",Fex2,"auto bridging atom; bridges Fe1,Fe2",auto-draft
+2,3,S,S3,terminal,-1,exclude,Fe1,,thiolate,"Fe1,C2","C,Fe",auto terminal donor; bound to Fe1,auto-draft
+3,4,S,S4,terminal,-1,exclude,Fe1,,thiolate,"Fe1,C1","C,Fe",auto terminal donor; bound to Fe1,auto-draft
+6,7,S,S5,terminal,-1,exclude,Fe2,,thiolate,"Fe2,C4","C,Fe",auto terminal donor; bound to Fe2,auto-draft
+7,8,S,S6,terminal,-1,exclude,Fe2,,thiolate,"Fe2,C3","C,Fe",auto terminal donor; bound to Fe2,auto-draft
+8,9,C,C1,spectator,0,exclude,,,,"S4,H1,H2,H3","Hx3,S",spectator atom; no direct metal-center role assigned,auto-draft
+12,13,C,C2,spectator,0,exclude,,,,"S3,H4,H5,H6","Hx3,S",spectator atom; no direct metal-center role assigned,auto-draft
+16,17,C,C3,spectator,0,exclude,,,,"S6,H7,H8,H9","Hx3,S",spectator atom; no direct metal-center role assigned,auto-draft
+20,21,C,C4,spectator,0,exclude,,,,"S5,H10,H11,H12","Hx3,S",spectator atom; no direct metal-center role assigned,auto-draft
+9,10,H,H1,spectator,0,exclude,,,,C1,C,spectator atom; no direct metal-center role assigned,auto-draft
+10,11,H,H2,spectator,0,exclude,,,,C1,C,spectator atom; no direct metal-center role assigned,auto-draft
+11,12,H,H3,spectator,0,exclude,,,,C1,C,spectator atom; no direct metal-center role assigned,auto-draft
+13,14,H,H4,spectator,0,exclude,,,,C2,C,spectator atom; no direct metal-center role assigned,auto-draft
+14,15,H,H5,spectator,0,exclude,,,,C2,C,spectator atom; no direct metal-center role assigned,auto-draft
+15,16,H,H6,spectator,0,exclude,,,,C2,C,spectator atom; no direct metal-center role assigned,auto-draft
+17,18,H,H7,spectator,0,exclude,,,,C3,C,spectator atom; no direct metal-center role assigned,auto-draft
+18,19,H,H8,spectator,0,exclude,,,,C3,C,spectator atom; no direct metal-center role assigned,auto-draft
+19,20,H,H9,spectator,0,exclude,,,,C3,C,spectator atom; no direct metal-center role assigned,auto-draft
+21,22,H,H10,spectator,0,exclude,,,,C4,C,spectator atom; no direct metal-center role assigned,auto-draft
+22,23,H,H11,spectator,0,exclude,,,,C4,C,spectator atom; no direct metal-center role assigned,auto-draft
+23,24,H,H12,spectator,0,exclude,,,,C4,C,spectator atom; no direct metal-center role assigned,auto-draft

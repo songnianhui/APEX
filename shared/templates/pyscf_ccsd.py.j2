@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""
+PySCF UCCSD / UCCSD(T) correlation calculation.
+Generated from template: pyscf_ccsd.py.j2
+Label: {{ label }}
+"""
+
+import numpy as np
+from pyscf import gto, scf, cc, lib, mp
+
+# ---------------------------------------------------------------------------
+# Molecule definition
+# ---------------------------------------------------------------------------
+mol = gto.M(
+    atom="""{{ geometry }}""",
+    basis="{{ basis_set }}",
+    charge={{ charge }},
+    spin={{ spin }},
+    verbose=4,
+    output="{{ label }}{{ output_suffix | default('_ccsd') }}.out",
+    symmetry=False,
+)
+
+print("=" * 70)
+print("PySCF UCCSD/UCCSD(T)")
+print("Label        : {{ label }}")
+print("Basis        : {{ basis_set }}")
+print("Charge       : {{ charge }}")
+print("Spin (2S+1)  : {{ spin }}")
+print("N electrons  : {{ n_electrons }}")
+print("N orbitals   : {{ n_orbitals }}")
+print("=" * 70)
+
+# ---------------------------------------------------------------------------
+# UHF reference
+# ---------------------------------------------------------------------------
+{% if config is defined and config.uhf_npz is defined %}
+# Load pre-computed UHF MOs from previous level (skip SCF)
+print("\n>>> Loading UHF MOs from npz: {{ config.uhf_npz }}")
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+mf.diis_space = 12
+data = np.load("{{ config.uhf_npz }}")
+mf.mo_coeff = (data["mo_coeff_a"], data["mo_coeff_b"])
+mf.mo_occ = (data["mo_occ_a"], data["mo_occ_b"])
+mf.mo_energy = (data["mo_energy_a"], data["mo_energy_b"])
+mf.e_tot = float(data["energy"])
+mf.converged = bool(data["converged"])
+uhf_energy = mf.e_tot
+if not mf.converged:
+    print(f"WARNING: UHF from npz was not converged! Continuing anyway.")
+{% else %}
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+mf.diis_space = 12
+
+{% if config is defined and config.level_shift is defined %}
+mf.level_shift = {{ config.level_shift }}
+{% endif %}
+{% if config is defined and config.damp is defined %}
+mf.damp = {{ config.damp }}
+{% endif %}
+{% if config is defined and config.density_fitting is defined and config.density_fitting %}
+mf = mf.density_fit(auxbasis="{{ config.get('aux_basis', 'def2-universal-jfit') }}")
+{% endif %}
+
+print("\n>>> Running UHF reference ...")
+uhf_energy = mf.kernel()
+if not mf.converged:
+    print(f"WARNING: UHF did not converge! Continuing anyway.")
+{% endif %}
+
+nocc_a = int(np.sum(mf.mo_occ[0] > 0))
+nocc_b = int(np.sum(mf.mo_occ[1] > 0))
+nvir_a = mf.mo_occ[0].size - nocc_a
+nvir_b = mf.mo_occ[1].size - nocc_b
+
+print(f"\nUHF Reference Energy: {uhf_energy:.12f} Hartree")
+print(f"  <S^2> = {mf.spin_square()[0]:.6f}")
+print(f"  Alpha occ/vir: {nocc_a}/{nvir_a}")
+print(f"  Beta  occ/vir: {nocc_b}/{nvir_b}")
+
+# ---------------------------------------------------------------------------
+# Frozen core
+# ---------------------------------------------------------------------------
+{% if config is defined and config.frozen is defined %}
+frozen = {{ config.frozen }}
+print(f"\nFrozen orbitals: {frozen}")
+{% else %}
+# Default: no frozen orbitals
+frozen = None
+print("\nNo frozen orbitals (frozen=None)")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# UMP2 (optional pre-check)
+# ---------------------------------------------------------------------------
+{% if config is defined and config.run_mp2 is defined and config.run_mp2 %}
+print("\n>>> Running UMP2 ...")
+mp2 = mp.UMP2(mf{% if config is defined and config.frozen is defined %}, frozen={{ config.frozen }}{% endif %})
+mp2_energy = mp2.kernel()
+mp2_corr = mp2.e_corr
+print(f"UMP2 correlation energy: {mp2_corr:.12f}")
+print(f"UMP2 total energy:       {mp2.e_tot:.12f}")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# UCCSD
+# ---------------------------------------------------------------------------
+{% if ccsd_npz is defined and ccsd_npz %}
+# Load converged UCCSD amplitudes from previous level (skip CCSD kernel)
+print("\n>>> Loading converged UCCSD amplitudes from: {{ ccsd_npz }}")
+mycc = cc.UCCSD(mf{% if config is defined and config.frozen is defined %}, frozen={{ config.frozen }}{% endif %})
+ccsd_data = np.load("{{ ccsd_npz }}")
+mycc.t1 = (ccsd_data["t1_a"], ccsd_data["t1_b"])
+mycc.t2 = (ccsd_data["t2_aaaa"], ccsd_data["t2_aabb"], ccsd_data["t2_bbbb"])
+mycc.converged = True
+mycc.e_corr = float(ccsd_data["ccsd_corr"])
+mycc.e_hf = uhf_energy   # e_tot property = e_hf + e_corr
+mycc.cycles = int(ccsd_data["ccsd_iterations"]) if "ccsd_iterations" in ccsd_data else 0
+ccsd_energy = mycc.e_tot
+
+print(f"\n{'=' * 70}")
+print(f"(Amplitudes loaded from previous UCCSD level)")
+print(f"UHF Reference Energy:  {uhf_energy:.12f}")
+print(f"UCCSD Correlation:     {mycc.e_corr:.12f}")
+print(f"UCCSD Total Energy:    {mycc.e_tot:.12f}")
+print(f"{'=' * 70}")
+{% else %}
+print("\n>>> Running UCCSD ...")
+mycc = cc.UCCSD(mf{% if config is defined and config.frozen is defined %}, frozen={{ config.frozen }}{% endif %})
+
+# Convergence parameters
+mycc.conv_tol = {{ config.get('ccsd_conv_tol', 1e-8) | default(1e-8) }}
+mycc.max_cycle = {{ config.get('ccsd_max_cycle', 2000) | default(2000) }}
+mycc.diis_space = {{ config.get('ccsd_diis_space', 8) | default(8) }}
+#mycc.conv_tol_normt = 1e-05
+{% if config is defined and config.ccsd_level_shift is defined %}
+mycc.level_shift = {{ config.ccsd_level_shift }}
+{% endif %}
+
+# Direct or in-core CC
+{% if config is defined and config.direct_ccsd is defined and config.direct_ccsd %}
+mycc.direct = True
+{% else %}
+mycc.direct = False
+{% endif %}
+
+ccsd_energy = mycc.kernel()
+
+print(f"\n{'=' * 70}")
+print(f"UHF Reference Energy:  {uhf_energy:.12f}")
+print(f"UCCSD Correlation:     {mycc.e_corr:.12f}")
+print(f"UCCSD Total Energy:    {mycc.e_tot:.12f}")
+print(f"UCCSD Converged:       {mycc.converged}")
+print(f"UCCSD Iterations:      {mycc.cycles}")
+print(f"{'=' * 70}")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# (T) correction
+# ---------------------------------------------------------------------------
+{% if run_triples is defined and run_triples %}
+print("\n>>> Running UCCSD(T) ...")
+try:
+    et_correction = mycc.ccsd_t()
+    ccsd_t_energy = mycc.e_tot + et_correction
+    print(f"\n{'=' * 70}")
+    print(f"(T) Correction:        {et_correction:.12f}")
+    print(f"UCCSD(T) Total Energy: {ccsd_t_energy:.12f}")
+    print(f"{'=' * 70}")
+except Exception as e:
+    print(f"UCCSD(T) failed: {e}")
+    et_correction = None
+    ccsd_t_energy = None
+{% else %}
+et_correction = None
+ccsd_t_energy = None
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# T1 diagnostic
+# ---------------------------------------------------------------------------
+nocc = max(nocc_a, nocc_b)
+if nocc > 0:
+    t1_norm_a = np.linalg.norm(mycc.t1[0]) / np.sqrt(nocc_a) if nocc_a > 0 else 0.0
+    t1_norm_b = np.linalg.norm(mycc.t1[1]) / np.sqrt(nocc_b) if nocc_b > 0 else 0.0
+    t1_diag = max(t1_norm_a, t1_norm_b)
+    print(f"\nT1 diagnostics:")
+    print(f"  Alpha T1: {t1_norm_a:.6f}")
+    print(f"  Beta  T1: {t1_norm_b:.6f}")
+    print(f"  Max    T1: {t1_diag:.6f}")
+    if t1_diag > 0.05:
+        print("  WARNING: T1 > 0.05, multi-reference character may be significant!")
+
+# ---------------------------------------------------------------------------
+# Density matrices
+# ---------------------------------------------------------------------------
+{% if config is defined and config.compute_rdm is defined and config.compute_rdm %}
+print("\n>>> Computing 1- and 2-RDMs ...")
+dm1 = mycc.make_rdm1()
+dm2 = mycc.make_rdm2()
+np.savez(
+    "{{ label }}_ccsd_rdm.npz",
+    dm1_a=dm1[0], dm1_b=dm1[1],
+    dm2_aaaa=dm2[0], dm2_aabb=dm2[1], dm2_bbbb=dm2[2],
+)
+print("RDMs saved to {{ label }}_ccsd_rdm.npz")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# Save results
+# ---------------------------------------------------------------------------
+results = {
+    "uhf_energy": uhf_energy,
+    "ccsd_corr": mycc.e_corr,
+    "ccsd_total": mycc.e_tot,
+    "ccsd_converged": mycc.converged,
+    "ccsd_iterations": mycc.cycles,
+    "nocc_a": nocc_a,
+    "nocc_b": nocc_b,
+    "nvir_a": nvir_a,
+    "nvir_b": nvir_b,
+    "spin_sq": mf.spin_square()[0],
+}
+if et_correction is not None:
+    results["et_correction"] = et_correction
+    results["ccsd_t_total"] = ccsd_t_energy
+
+# Save amplitudes for potential reuse in UCCSD(T) level
+results["t1_a"] = mycc.t1[0]
+results["t1_b"] = mycc.t1[1]
+results["t2_aaaa"] = mycc.t2[0]
+results["t2_aabb"] = mycc.t2[1]
+results["t2_bbbb"] = mycc.t2[2]
+
+{% set result_suffix = result_suffix | default("_ccsd_results") %}
+np.savez("{{ label }}{{ result_suffix }}.npz", **results)
+print(f"\nResults saved to {{ label }}{{ result_suffix }}.npz")
+print("Done.")

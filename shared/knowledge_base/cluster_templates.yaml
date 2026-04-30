@@ -1,0 +1,162 @@
+# Known cluster templates for active space analysis
+# These provide validated reference data for common systems
+
+FeMo_cofactor:
+  description: "Iron-molybdenum cofactor of nitrogenase"
+  core_formula: "Fe7MoS9C"
+  pdb_id: "3U7Q"
+  resting_state: "E0"
+  total_charge: -1
+  ground_state_S: 1.5  # S = 3/2
+  ground_state_2S: 3
+  total_metal_oxidation: 21  # 3×Fe(II) + 4×Fe(III) + Mo(III) = 6+12+3 = 21
+  metal_centers:
+    - {label: "Fe1", element: "Fe", crystallographic_id: 1}
+    - {label: "Fe2", element: "Fe", crystallographic_id: 2}
+    - {label: "Fe3", element: "Fe", crystallographic_id: 3}
+    - {label: "Fe4", element: "Fe", crystallographic_id: 4}
+    - {label: "Fe5", element: "Fe", crystallographic_id: 5}
+    - {label: "Fe6", element: "Fe", crystallographic_id: 6}
+    - {label: "Fe7", element: "Fe", crystallographic_id: 7}
+    - {label: "Mo",  element: "Mo", crystallographic_id: 8}
+  oxidation_states:
+    Mo: +3  # Mo(III), S=1/2
+    Fe: [+2, +3]  # mixed: 3×Fe(II) + 4×Fe(III) for charge balance
+  active_space:
+    LLDUC_model:
+      n_electrons: 113
+      n_orbitals: 76
+      description: "Fe 3d, Mo 4d, S 3p, C 2s+2p, and ligand 2p"
+      reference: "Li et al. JCP 2019; Zhai et al. 2026"
+    extended_model:
+      n_electrons: 277
+      n_orbitals: 404
+      description: "Including dynamical correlation orbitals via MP2 natural orbital truncation"
+      reference: "Zhai et al. 2026"
+  validated_orbital_composition:
+    LLDUC_model:
+      - {element: "Fe", ao_type: "3d", n_centers: 7, n_orbitals: 35}
+      - {element: "Mo", ao_type: "4d", n_centers: 1, n_orbitals: 5}
+      - {element: "S",  ao_type: "3p", n_centers: 9, n_orbitals: 27}
+      - {element: "C",  ao_type: "2s", n_centers: 1, n_orbitals: 1}
+      - {element: "C",  ao_type: "2p", n_centers: 1, n_orbitals: 3}
+      - {element: "ligand_2p", ao_type: "2p", n_centers: "variable", n_orbitals: 5}
+    with_sulfur_model:
+      - {element: "Fe", ao_type: "3d", n_centers: 7, n_orbitals: 35}
+      - {element: "Mo", ao_type: "4d", n_centers: 1, n_orbitals: 5}
+      - {element: "S",  ao_type: "3p", n_centers: 9, n_orbitals: 27}
+  spin_isomers:
+    total_collinear: 35
+    with_C3_symmetry: 10  # BS families BS1-BS10
+    low_energy_families: ["BS7", "BS8", "BS10"]
+    ground_state_candidates: ["BS7-235", "BS8-237"]
+  electronic_configurations:
+    total_uhf_guesses: 78750
+    Fe_II_III_assignments: 18  # per spin isomer
+    d_orbital_choices_per_Fe_II: 5
+  symmetry:
+    approximate: "C3"
+    axis: "Fe1-Mo"
+  protein_environment:
+    coordinating_residues:
+      - {residue: "Cys275", atom: "S", coordinates_to: "Fe1"}
+      - {residue: "His442", atom: "N", coordinates_to: "Mo"}
+    nearby_residues: ["Gly357", "Arg359", "Gln191", "His195", "Tyr229"]
+  references:
+    - "Zhai et al. 2026, arXiv:2601.04621"
+    - "Li et al. JCP 150, 024302, 2019"
+    - "Reiher et al. PNAS 114, 7555, 2017"
+    - "Bjornsson et al. Inorg. Chem. 56, 1470, 2017"
+
+Fe4S4_cubane:
+  description: "Iron-sulfur cubane cluster [4Fe-4S]"
+  core_formula: "Fe4S4"
+  common_charges: [-2, -1, 0, +1]
+  typical_oxidation_states:
+    charge_minus2: "2×Fe(II) + 2×Fe(III)"
+    charge_minus1: "1×Fe(II) + 3×Fe(III)"
+    charge_minus3: "3×Fe(II) + 1×Fe(III)"
+  total_metal_oxidation:
+    charge_minus2: 10  # 2×Fe(II) + 2×Fe(III) = 4+6 = 10
+    charge_minus1: 11  # 1×Fe(II) + 3×Fe(III) = 2+9 = 11
+  ground_state_S:
+    charge_minus2: 0  # antiferromagnetic coupling
+    charge_minus1: 0.5
+  active_space:
+    minimal:
+      n_electrons: 22  # approximate for [4Fe-4S]2-
+      n_orbitals: 20
+      description: "Fe 3d orbitals"
+    with_sulfur:
+      n_electrons: 46
+      n_orbitals: 32
+      description: "Fe 3d + S 3p"
+  validated_orbital_composition:
+    minimal:
+      - {element: "Fe", ao_type: "3d", n_centers: 4, n_orbitals: 20}
+    with_sulfur:
+      - {element: "Fe", ao_type: "3d", n_centers: 4, n_orbitals: 20}
+      - {element: "S",  ao_type: "3p", n_centers: 4, n_orbitals: 12}
+  spin_isomers:
+    description: "Enumerate based on 4 Fe centers with local spins"
+  references:
+    - "Sharma et al. Nature Chemistry 2014"
+
+Fe2S2_dimer:
+  description: "Iron-sulfur dimer [2Fe-2S]"
+  core_formula: "Fe2S2"
+  common_charges: [-2, -1, 0]
+  typical_oxidation_states:
+    charge_minus2: "2×Fe(III)"
+    charge_minus1: "1×Fe(II) + 1×Fe(III)"
+  total_metal_oxidation:
+    charge_minus2: 6    # 2×Fe(III) = +6
+    charge_minus1: 5    # Fe(II)+Fe(III) = +5
+  ground_state_S:
+    charge_minus2: 0  # antiferromagnetic
+    charge_minus1: 0.5
+  active_space:
+    minimal:
+      n_electrons: 10
+      n_orbitals: 10
+      description: "Fe 3d"
+    with_sulfur:
+      n_electrons: 22
+      n_orbitals: 16
+      description: "Fe 3d + S 3p"
+  validated_orbital_composition:
+    minimal:
+      - {element: "Fe", ao_type: "3d", n_centers: 2, n_orbitals: 10}
+    with_sulfur:
+      - {element: "Fe", ao_type: "3d", n_centers: 2, n_orbitals: 10}
+      - {element: "S",  ao_type: "3p", n_centers: 2, n_orbitals: 6}
+  references:
+    - "Sharma et al."
+
+Mn4CaO5_OEC:
+  description: "Oxygen-evolving complex of Photosystem II"
+  core_formula: "Mn4CaO5"
+  total_charge: varies  # depends on S-state
+  S_states:
+    S0: {Mn_oxidation: "III,III,III,IV", S: 0.5}
+    S1: {Mn_oxidation: "III,III,IV,IV", S: 0}
+    S2: {Mn_oxidation: "III,IV,IV,IV", S: 0.5}
+    S3: {Mn_oxidation: "IV,IV,IV,IV", S: 3}
+  active_space:
+    minimal:
+      n_electrons: 24  # approximate for S1
+      n_orbitals: 20
+      description: "Mn 3d orbitals"
+    with_oxo:
+      n_electrons: 48
+      n_orbitals: 35
+      description: "Mn 3d + bridging O 2p"
+  validated_orbital_composition:
+    minimal:
+      - {element: "Mn", ao_type: "3d", n_centers: 4, n_orbitals: 20}
+    with_oxo:
+      - {element: "Mn", ao_type: "3d", n_centers: 4, n_orbitals: 20}
+      - {element: "O",  ao_type: "2p", n_centers: 5, n_orbitals: 15}
+  notes: "Ca2+ is redox-inactive, does not contribute d electrons"
+  references:
+    - "Krewald et al. Chem. Sci. 2015"

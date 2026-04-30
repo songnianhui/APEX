@@ -1,0 +1,75 @@
+cluster:
+  total_charge: -3
+  target_spin: 0.5
+  symmetry_group: "C1"
+  reduction_symmetry: "C1"
+  config_reduction_mode: "none"
+
+defaults:
+  projection_role_by_role:
+    metal: metal_df
+    bridging: bridging_p
+    terminal: exclude
+
+groups:
+  - selector:
+      element: Fe
+    assign:
+      role: metal
+      charge: 0
+      projection_role: metal_df
+
+  - selector:
+      element: S
+    assign:
+      role: bridging
+      charge: -2
+      ligand_type: sulfide
+      projection_role: bridging_p
+
+  - selector:
+      element: H
+    assign:
+      role: terminal
+      charge: -1
+      ligand_type: hydride
+      projection_role: exclude
+
+atoms:
+  - atom_index: 0
+    element: Fe
+    label: Fe1
+
+  - atom_index: 1
+    element: Fe
+    label: Fe2
+
+  - atom_index: 2
+    element: S
+    label: S1
+    bridging_to: [Fe1, Fe2]
+
+  - atom_index: 3
+    element: S
+    label: S2
+    bridging_to: [Fe1, Fe2]
+
+  - atom_index: 4
+    element: H
+    label: H1
+    bound_to: Fe1
+
+  - atom_index: 5
+    element: H
+    label: H2
+    bound_to: Fe1
+
+  - atom_index: 6
+    element: H
+    label: H3
+    bound_to: Fe2
+
+  - atom_index: 7
+    element: H
+    label: H4
+    bound_to: Fe2

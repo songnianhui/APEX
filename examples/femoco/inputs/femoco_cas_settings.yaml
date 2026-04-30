@@ -1,0 +1,77 @@
+# The active orbitals were obtained by first
+# per-forming high-spin unrestricted Kohn-Sham calculations
+# with the B3LYP functional and
+# the TZP-DKH30 basis for Fe, S, and Mo, and
+# the def2-SVP basis31 for the other atoms (C, H, O, and N)
+# using a structure in Ref. 22, and
+# then split-localizing the unrestricted natural orbitals.
+# https://github.com/zhendongli2008/Active-space-model-for-FeMoco
+# {'Fe':'TZP-DKH','Mo':'TZP-DKH','S':'TZP-DKH',\
+# 'C':'def2-SVP','H':'def2-SVP','O':'def2-SVP','N':'def2-SVP'}
+# Charge = -3, Spin = 35 (PYSCF convention: 2*S) for UKS/B3LYP with sf-X2C Hamiltonian and COSMO eps=4.0
+# Molecular orbitals: Split-Localized MOs, see MOs_plots (ordered by Genetic Algorithm implemented in the BLOCK code)
+# Active space information: CAS(113e,76o)
+
+charge: -3 # Chan 2019 LLDUC charge = -3；MoFe_7S_9C: charge=-1
+spin: 1.5 # CAS target
+scf_spin: 17.5 # SCF reference high-spin
+benchmark_profile: "chan_femoco_2026_llduc"
+config_reduction_mode: "none"
+
+scf_method: "uks"
+xc_functional: "B3LYP"
+
+# basis_set_default: "tzp-dkh"
+basis_per_element:
+  Fe: "tzp-dkh"
+  MO: "tzp-dkh"
+  S: "tzp-dkh"
+  C: "def2-SVP"
+  H: "def2-SVP"
+  O: "def2-SVP"
+  N: "def2-SVP"
+
+relativistic: "sf-x2c"
+solvation_model: "ddcosmo" # Chan 2019
+solvation_epsilon: 4.0
+
+conv_tol: 1.0e-12 # Chan 2017: tight convergence
+max_cycle: 2000
+scf_verbose: 4
+
+# ── SCF convergence helpers ────────────────────────────────────
+init_guess: "atom"
+# scf_damp: 0.3
+# scf_level_shift: 0.0
+diis_space: 8
+
+# Fractional occupation: smooth HOMO oscillation for degenerate systems
+# frac_occ: true
+#Fermi/Gauss smearing: thermal broadening near Fermi surface
+# smearing_method: "fermi" # "none" | "fermi" | "gauss"
+# smearing_sigma: 0.01 # smearing width (Hartree), adjustable 0.001-0.05
+# Stage 3: Newton-Raphson (second-order SCF) refinement
+# Activated when Stage 2 fails to converge
+scf_stage1_rough: true
+scf_stage3_newton: true
+newton_max_cycle: 10
+newton_conv_tol: 1.0e-12
+
+localization_method: "pm"
+# ── Pipek-Mezey localization parameters ──────────────────────
+# Only effective when localization_method is "pm".
+pm_pop_method: "meta-lowdin" # PM 1989 原始定义基于 Mulliken 布居（PySCF 默认 meta-lowdin）
+pm_conv_tol: 1.0e-6 # convergence threshold
+pm_max_cycle: 100 # max iterations
+pm_init_guess: "atomic" # "atomic" | null (use mo_coeff directly)
+pm_exponent: 2 # PM norm power: 2 or 4
+
+# ── Orbital visualization ───────────────────────────────────────
+generate_cubes: true # false = skip cube file generation
+cube_grid: "120x120x120" # cube grid resolution
+pw_plot_threshold:
+  0.001
+  # save cube+PNG for orbitals with proj_weight >= this threshold
+  # (unset = active space only, default)
+render_png: true # false = skip orbital HTML gallery generation
+png_isovalue: 0.05 # isosurface threshold for rendering

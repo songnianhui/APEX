@@ -1,0 +1,69 @@
+# [Fe2S2(SCH3)4]^{3-} CAS Settings
+# Reduced Fe(III)-Fe(II) dimer benchmark.
+#
+# Structure:
+#   Coordinates from Chan 2014 Supplementary Table 2:
+#   "Coordinates (in A) of the relaxed [Fe2S2(SCH3)4]3- model complex."
+#
+# Charge balance:
+#   Total charge = -3
+#   Ligands: 2 x mu-S(2-) + 4 x SCH3(-) = -8
+#   Metal oxidation sum = -3 - (-8) = +5 -> Fe(III) + Fe(II)
+#
+# Spin states:
+#   Target broken-symmetry benchmark state: S = 1/2
+#   High-spin reference used in Chan 2026 population analysis: S = 9/2
+#
+# Active space:
+#   CAS(31e, 20o) minimal full-valence model
+#   = 10 Fe-3d + 6 bridge-S 3p + 4 terminal-donor S 3p
+#   References:
+#   - Chan 2014 Supplementary Table 2 discussion
+#   - Chan 2026 Supplementary Tables 6 and 8, Sec. "The [2Fe-2S] 20-orbital active space model"
+
+charge: -3
+spin: 0.5
+scf_spin: 4.5
+
+# Leave benchmark_profile blank for now.
+# The current APEX_Filter special-case profile `chan_fe2s2_2017`
+# is hard-coded for oxidized 2xFe(III), not reduced Fe(III)-Fe(II).
+benchmark_profile: ""
+family_scheme: "literature_fe2s2_dimer"
+config_reduction_mode: "none"
+
+cluster_info_path: "inputs/fe2s2_red_cluster_info.yaml"
+scf_method: "uks"
+xc_functional: "BP86"
+basis_set_default: "tzp-dkh"
+relativistic: "sf-x2c"
+solvation_model: "none"
+
+conv_tol: 1.0e-12
+max_cycle: 200
+scf_verbose: 4
+
+init_guess: "atom"
+diis_space: 8
+scf_stage1_rough: true
+scf_stage3_newton: true
+newton_max_cycle: 10
+newton_conv_tol: 1.0e-12
+
+localization_method: "pm"
+pm_pop_method: "Mulliken"
+pm_conv_tol: 1.0e-8
+pm_max_cycle: 500
+pm_init_guess: "atomic"
+pm_exponent: 2
+
+cpt_cas_type: "uno"
+
+generate_cubes: true
+cube_grid: "120x120x120"
+pw_plot_threshold:
+  0.01
+render_png: true
+png_isovalue: 0.05
+
+dmrg_symm_type: "sz"

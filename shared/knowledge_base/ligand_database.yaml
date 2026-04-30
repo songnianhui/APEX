@@ -1,0 +1,172 @@
+# Ligand properties for active space analysis
+# Defines bridging atoms, donor atoms, and their orbital contributions
+
+# ------------------------------------------------------------------
+# Common bridging/donor atoms
+# ------------------------------------------------------------------
+S:
+  atomic_number: 16
+  common_charges: [-2]
+  bridging_orbitals: ["3p"]
+  n_bridging_orbitals: 3
+  electrons_as_S2minus: 6
+  covalent_radius_angstrom: 1.05
+  role: "bridging"
+  notes: "Sulfide bridges in Fe-S clusters"
+  expected_active_orbitals:
+    - ao_type: "3p"
+      n_orbitals: 3
+      role: "bridging"
+      priority: "required"
+
+O:
+  atomic_number: 8
+  common_charges: [-2, -1]
+  bridging_orbitals: ["2p"]
+  n_bridging_orbitals: 3
+  electrons_as_O2minus: 6
+  electrons_as_OH_minus: 7  # hydroxide
+  covalent_radius_angstrom: 0.66
+  role: "bridging"
+  notes: "Oxo/hydroxo bridges in Mn-oxo clusters"
+  expected_active_orbitals:
+    - ao_type: "2p"
+      n_orbitals: 3
+      role: "bridging"
+      priority: "required"
+
+N:
+  atomic_number: 7
+  common_charges: [-3, -1, 0]
+  bridging_orbitals: ["2p"]
+  n_bridging_orbitals: 3
+  electrons_as_N3minus: 6  # nitride
+  electrons_as_donor: 2    # lone pair donation
+  covalent_radius_angstrom: 0.71
+  role: "donor/bridging"
+  notes: "Histidine N donors, amide bridges"
+  expected_active_orbitals:
+    - ao_type: "2p"
+      n_orbitals: 3
+      role: "bridging_or_donor"
+      priority: "required"
+
+C:
+  atomic_number: 6
+  common_charges: [-4]
+  active_orbitals: ["2s", "2p"]
+  n_active_orbitals: 4  # 1 × 2s + 3 × 2p
+  electrons_as_C4minus: 8
+  covalent_radius_angstrom: 0.77
+  role: "interstitial"
+  notes: "Interstitial carbide in FeMo-co (C4-)"
+  expected_active_orbitals:
+    - ao_type: "2s"
+      n_orbitals: 1
+      role: "interstitial"
+      priority: "supplementary"
+    - ao_type: "2p"
+      n_orbitals: 3
+      role: "interstitial"
+      priority: "supplementary"
+
+Se:
+  atomic_number: 34
+  common_charges: [-2]
+  bridging_orbitals: ["4p"]
+  n_bridging_orbitals: 3
+  electrons_as_Se2minus: 6
+  covalent_radius_angstrom: 1.20
+  role: "bridging"
+  notes: "Selenide substitution in Fe-Se clusters"
+  expected_active_orbitals:
+    - ao_type: "4p"
+      n_orbitals: 3
+      role: "bridging"
+      priority: "required"
+
+Cl:
+  atomic_number: 17
+  common_charges: [-1]
+  bridging_orbitals: ["3p"]
+  n_bridging_orbitals: 3
+  electrons_as_Cl_minus: 6
+  covalent_radius_angstrom: 1.02
+  role: "terminal/bridging"
+  expected_active_orbitals:
+    - ao_type: "3p"
+      n_orbitals: 3
+      role: "terminal_or_bridging"
+      priority: "supplementary"
+
+# ------------------------------------------------------------------
+# Common terminal ligands (contribute to charge but not active space)
+# ------------------------------------------------------------------
+terminal_ligands:
+  water:
+    formula: "H2O"
+    charge: 0
+    donor_atom: "O"
+    n_donor_electrons: 2
+
+  hydroxide:
+    formula: "OH"
+    charge: -1
+    donor_atom: "O"
+    n_donor_electrons: 2
+
+  cysteine_thiolate:
+    formula: "RS"
+    charge: -1
+    donor_atom: "S"
+    n_donor_electrons: 2
+    notes: "Cysteine residue coordinating Fe in Fe-S proteins"
+
+  histidine_imidazole:
+    formula: "His"
+    charge: 0
+    donor_atom: "N"
+    n_donor_electrons: 2
+    notes: "Histidine residue coordinating Mo in FeMo-co"
+
+  homocitrate:
+    formula: "HC"
+    charge: -3
+    donor_atoms: ["O", "O"]
+    n_donor_electrons: 4
+    notes: "Homocitrate chelating Mo in FeMo-co"
+
+  carboxylate:
+    formula: "RCO2"
+    charge: -1
+    donor_atoms: ["O", "O"]
+    n_donor_electrons: 4
+
+  phosphate:
+    formula: "PO4"
+    charge: -3
+    donor_atom: "O"
+    n_donor_electrons: 2
+
+  carbonyl:
+    formula: "CO"
+    charge: 0
+    donor_atom: "C"
+    n_donor_electrons: 2
+    notes: "Strong-field ligand, pi-acceptor"
+
+  cyanide:
+    formula: "CN"
+    charge: -1
+    donor_atom: "C"
+    n_donor_electrons: 2
+    notes: "Strong-field ligand"
+
+# ------------------------------------------------------------------
+# Distance thresholds for connectivity detection (Angstroms)
+# Metal-X bond detection: sum of covalent radii × tolerance_factor
+# ------------------------------------------------------------------
+bond_detection:
+  tolerance_factor: 1.3  # multiply sum of covalent radii
+  max_metal_ligand_distance: 3.0  # absolute upper bound
+  max_metal_metal_distance: 3.5   # for direct metal-metal bonds

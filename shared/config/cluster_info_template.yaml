@@ -1,0 +1,63 @@
+# Explicit cluster annotation template shared by APEX_CAS and APEX_Filter.
+#
+# The atom order must match the paired .xyz file exactly.
+# `charge` below means the integer charge label used for formal
+# oxidation-state / ligand-charge analysis. It is not a Mulliken/Bader-like
+# density-derived partial charge.
+# Recommended precedence:
+#   defaults -> groups -> atoms
+# with later layers overriding earlier ones.
+
+cluster:
+  # total_charge: -3
+  # target_spin: 0.5
+  # symmetry_group: "C1"
+  # reduction_symmetry: "C1"
+  # family_scheme: ""
+  # benchmark_profile: ""
+  # config_reduction_mode: "none"
+
+defaults:
+  projection_role_by_role:
+    metal: metal_df
+    bridging: bridging_p
+    terminal: exclude
+
+groups:
+  # - selector:
+  #     element: Fe
+  #   assign:
+  #     role: metal
+  #     charge: 0
+  #     projection_role: metal_df
+  #
+  # - selector:
+  #     element: S
+  #   assign:
+  #     role: bridging
+  #     charge: -2
+  #     ligand_type: sulfide
+  #     projection_role: bridging_p
+  #
+  # - selector:
+  #     element: H
+  #   assign:
+  #     role: terminal
+  #     charge: -1
+  #     ligand_type: hydride
+  #     projection_role: exclude
+
+atoms:
+  # - atom_index: 0
+  #   element: Fe
+  #   label: Fe1
+  #
+  # - atom_index: 2
+  #   element: S
+  #   label: S1
+  #   bridging_to: [Fe1, Fe2]
+  #
+  # - atom_index: 4
+  #   element: H
+  #   label: H1
+  #   bound_to: Fe1

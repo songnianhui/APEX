@@ -1,0 +1,82 @@
+# [Fe4S4H4]^{2-} CAS Settings
+# Cubane cluster, 2xFe(III) + 2xFe(II), ground state S=0
+# H- terminal ligands replace SCH3- for minimal cubane model
+#
+# Charge balance:
+#   Total charge = -2
+#   Ligands: 4 x mu3-S(2-) + 4 x H(-) = -8 + (-4) = -12
+#   Metal oxidation sum = -2 - (-12) = +10 -> 2xFe(III) + 2xFe(II) = +10
+#
+# Spin states:
+#   Ground state: S=0 (antiferromagnetic: pair1{Fe(III)+Fe(II)}=9/2, pair2=9/2, AF)
+#   High-spin:    S=9 (ferromagnetic: 2x5/2 + 2x2 = 9)
+#
+# Active space (expected, auto-determined by UNO NOON):
+#   ~CAS(46e, 32o) = 20 Fe-3d + 12 mu3-S-3p
+#   (smaller than full [Fe4S4(SCH3)4]2- which has CAS(54e, 36o)
+#    due to absence of terminal S 3p orbitals)
+#
+# Reference: Li & Chan, JCTC 13, 2681 (2017) — Fe4S4 cubane model
+#            Zhai et al., arXiv:2601.04621 (2026) — screening pipeline
+
+charge: -2
+spin: 0.0 # CAS target: S=0 singlet
+scf_spin: 9.0 # SCF reference: S=9 high-spin (2xFe(III)+2xFe(II) ferromagnetic)
+family_scheme: "literature_fe4s4_cubane"
+config_reduction_mode: "none"
+
+scf_method: "uks"
+xc_functional: "BP86"
+
+# Chan 2017: tzp-dkh for all atoms with sf-X2C
+basis_set_default: "def2-TZVP" #"tzp-dkh"
+
+relativistic: "sf-x2c"
+solvation_model: "none" # Chan 2017: no solvation for Fe4S4
+
+conv_tol: 1.0e-10 # Chan 2017: tight convergence
+max_cycle: 100
+scf_verbose: 4
+
+# ── SCF convergence helpers ────────────────────────────────────
+init_guess: "atom"
+# scf_damp: 0.3
+# scf_level_shift: 0.0
+diis_space: 8
+
+# Fractional occupation: smooth HOMO oscillation for degenerate systems
+# frac_occ: true
+#Fermi/Gauss smearing: thermal broadening near Fermi surface
+# smearing_method: "fermi" # "none" | "fermi" | "gauss"
+# smearing_sigma: 0.01 # smearing width (Hartree), adjustable 0.001-0.05
+# Stage 3: Newton-Raphson (second-order SCF) refinement
+# Activated when Stage 2 fails to converge
+scf_stage1_rough: true
+scf_stage3_newton: true
+newton_max_cycle: 10
+newton_conv_tol: 1.0e-12
+
+localization_method: "pm"
+# ── Pipek-Mezey localization parameters ──────────────────────
+# Only effective when localization_method is "pm".
+pm_pop_method: "Mulliken" # PM 1989 原始定义基于 Mulliken 布居（PySCF 默认 meta-lowdin）
+pm_conv_tol: 1.0e-8 # convergence threshold
+pm_max_cycle: 500 # max iterations
+pm_init_guess: "atomic" # "atomic" | null (use mo_coeff directly)
+pm_exponent: 2 # PM norm power: 2 or 4
+
+cpt_cas_type: "uno" # "uno" | "uno_type2" | "luo" | "avas" | "alpha_sl"
+#                                 # "uno": UNO (split-localized natural orbitals)
+#                                 # "luo": LUO (alpha/beta separately localized)
+#                                 # "avas": AVAS (projection-based, requires additional config)
+#                                 # "alpha_sl": Chan 2014 alpha split-localization
+
+# ── Orbital visualization ───────────────────────────────────────
+generate_cubes: true # false = skip cube file generation
+cube_grid: "120x120x120" # cube grid resolution
+pw_plot_threshold:
+  0.001
+  # save cube+PNG for orbitals with proj_weight >= this threshold
+  # (unset = active space only, default)
+render_png: true # false = skip orbital HTML gallery generation
+png_isovalue: 0.05 # isosurface threshold for rendering

@@ -1,0 +1,17 @@
+apex_step,apex_theory,our_e_total_hartree,chan_reference,chan_e_total_hartree,our_minus_chan_mEh,note
+step3,UHF,-5092.778046833884,Table 5 UHF,-5092.778015970000,-0.030864,same-system energy benchmark
+step4,CCSD,-5092.845874256951,Table 5 UCCSD,-5092.845793970000,-0.080287,same-system energy benchmark
+step5,CCSD(T),-5092.861451756011,Table 5 UCCSD(T),-5092.861361970000,-0.089786,same-system energy benchmark
+step6,CCSDT,-5092.866305089044,Table 5 UCCSDT,-5092.866206970000,-0.098119,same-system energy benchmark
+step8_M100,DMRG_pyscf_dmrgci_sz,-5092.862318636900,Table 7 UDMRG(D=100),-5092.864229970000,1.911333,same active-space model different DMRG implementation
+step8_M200,DMRG_pyscf_dmrgci_sz,-5092.868278923903,Table 7 UDMRG(D=200),-5092.867121970000,-1.156954,same active-space model different DMRG implementation
+step8_M400,DMRG_pyscf_dmrgci_sz,-5092.870307300223,Table 7 UDMRG(D=400),-5092.868767970000,-1.539330,same active-space model different DMRG implementation
+step8_M600,DMRG_pyscf_dmrgci_sz,-5092.870748485378,Table 7 UDMRG(D=600),-5092.869405970000,-1.342515,same active-space model different DMRG implementation
+step8_M800,DMRG_pyscf_dmrgci_sz,-5092.870902878984,Table 7 UDMRG(D=800),-5092.869723970000,-1.178909,same active-space model different DMRG implementation
+step8_M1000,DMRG_pyscf_dmrgci_sz,-5092.870965604963,Table 7 UDMRG(D=1000),-5092.869894970000,-1.070635,same active-space model different DMRG implementation
+step8_M1200,DMRG_pyscf_dmrgci_sz,-5092.870996551455,Table 7 UDMRG(D=1200),-5092.870126970000,-0.869581,same active-space model different DMRG implementation
+step8_M1600,DMRG_pyscf_dmrgci_sz,-5092.871019920727,Table 7 UDMRG(D=1600),-5092.870494970000,-0.524951,same active-space model different DMRG implementation
+step8_M2000,DMRG_pyscf_dmrgci_sz,-5092.871027879793,Table 7 UDMRG(D=2000),-5092.870663970000,-0.363910,same active-space model different DMRG implementation
+step8_M2400,DMRG_pyscf_dmrgci_sz,-5092.871031079445,Table 7 UDMRG(D=2400),-5092.870799970000,-0.231109,same active-space model different DMRG implementation
+step9,DMRG_D_extrapolation,-5092.871060136653,Table 5 SA-DMRG[D=12k],-5092.870932970000,-0.127167,10-point D->inf fit from M=100..2400
+step9,DMRG_D_extrapolation,-5092.871060136653,Chan README exact,-5092.870933070000,-0.127067,10-point D->inf fit compared to Chan public exact reference

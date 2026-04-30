@@ -1,0 +1,45 @@
+# APEX_CAS CAS Settings Template
+# Copy this file, uncomment and modify the fields you need, then run:
+#   apex-cas compute structure.xyz --cas-settings my_settings.yaml
+# All fields have defaults — only override what you need.
+
+# ── Molecule ───────────────────────────────────────────────────
+# charge: 0                       # total charge
+# spin: 0.0                       # high-spin S for SCF (e.g. 17.5 for S=35/2)
+
+# ── Preset ─────────────────────────────────────────────────────
+# preset: "default"               # "default" | "fast"
+
+# ── SCF method ─────────────────────────────────────────────────
+# scf_method: "uks"               # "uks" | "uhf"
+# xc_functional: "B3LYP"         # DFT functional
+
+# ── Basis set ──────────────────────────────────────────────────
+# basis_set_default: "def2-TZVP"  # default basis for elements not listed below
+# basis_per_element:              # per-element override
+#   Fe: "def2-TZVP"
+#   Mo: "def2-TZVP"
+#   S:  "def2-TZVP"
+#   C:  "def2-SVP"
+#   H:  "def2-SVP"
+#   O:  "def2-SVP"
+#   N:  "def2-SVP"
+
+# ── Relativistic & Solvation ───────────────────────────────────
+# relativistic: "sf-x2c"         # "none" | "sf-x2c" | "dkh"
+# solvation_model: "ddcosmo"     # "none" | "ddcosmo"
+# solvation_epsilon: 4.0         # dielectric constant
+
+# ── SCF convergence ────────────────────────────────────────────
+# conv_tol: 1.0e-10               # energy convergence threshold
+# max_cycle: 2000                 # max SCF iterations
+# scf_verbose: 4                  # PySCF verbosity (4 = show iterations)
+
+# ── SCF convergence helpers ────────────────────────────────────
+# init_guess: "atom"             # "atom" | "minao" | "huckel" | "vsap"
+# scf_damp: 0.0                  # density damping (0 = off, try 0.1-0.5)
+# scf_level_shift: 0.0           # level shift for virtuals (0 = off, try 0.05-0.3)
+# diis_space: 8                  # number of DIIS vectors
+
+# ── Orbital localization ───────────────────────────────────────
+# localization_method: "pm"      # "pm" | "boys"

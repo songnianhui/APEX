@@ -1,0 +1,94 @@
+# [Fe2S2(SCH3)4]^{2-} CAS Settings
+# Oxidized Fe(III)-Fe(III) dimer, ground state S=0
+# Thiolate SCH3- ligands (standard Chan 2017 model)
+#
+# Charge balance:
+#   Total charge = -2
+#   Ligands: 2 x mu-S(2-) + 4 x SCH3(-) = -4 + (-4) = -8
+#   Metal oxidation sum = -2 - (-8) = +6 -> 2xFe(III)
+#
+# Spin states:
+#   Ground state: S=0 (antiferromagnetic coupling of two S=5/2 Fe(III))
+#   High-spin:    S=5 (ferromagnetic: 5/2 + 5/2 = 5)
+#
+# Active space (Chan 2017):
+#   CAS(30e, 20o) = 10 Fe-3d + 10 mu-S-3p/bonding
+# Reference: Li & Chan, JCTC 13, 2681 (2017) — Fe2S2 model
+# First, a small active space, CAS(10e,10o) with only 3dFe orbitals constructed from localized DFT (density functional theory) orbitals
+#  using the BP86 functional,81,82 the TZP-DKH basis,83 and the sf-X2C (spin-free exact two-component) Hamiltonian84,85 to include scalar
+# relativistic eﬀects.
+# https://github.com/zhendongli2008/Active-space-model-for-Iron-Sulfur-Clusters/blob/main/README.md
+# # For tbe ground state with spin S=0, the active space energy E[act] is
+# fe2s2: dmrg(d=8000) -116.6056091 Hartree (Exact)
+# fe2s2: −4976.26532397 Hartree
+# The indices for Fe3d orbitals are as follows:
+# Fe2S2: 2*5=10 [2Fe(III)] [[2,3,4,5,6],[13,14,15,16,17]]
+# A reasonable guess may be the broken-symmetry determinant with Ms=0:
+# 1.Fe2S2: spin up = {fe1}, spin down={fe2}
+
+charge: -2
+spin: 0.0 # CAS target: S=0 singlet
+scf_spin: 5.0 # SCF reference: S=5 high-spin (Fe(III)-Fe(III) ferromagnetic)
+benchmark_profile: "chan_fe2s2_2017"
+config_reduction_mode: "none"
+cluster_info_path: "inputs/fe2s2_cluster_info.yaml"
+scf_method: "uks"
+xc_functional: "BP86"
+
+# Chan 2017: tzp-dkh for all atoms with sf-X2C
+basis_set_default: "tzp-dkh"
+
+relativistic: "sf-x2c"
+solvation_model: "none" # Chan 2017: no solvation for Fe2S2
+# solvation_model: "ddcosmo" # Chan 2019
+# solvation_epsilon: 4.0
+
+conv_tol: 1.0e-12 # Chan 2017: tight convergence
+max_cycle: 200
+scf_verbose: 4
+
+# ── SCF convergence helpers ────────────────────────────────────
+init_guess: "atom"
+# scf_damp: 0.3
+# scf_level_shift: 0.0
+diis_space: 8
+
+# Fractional occupation: smooth HOMO oscillation for degenerate systems
+# frac_occ: true
+#Fermi/Gauss smearing: thermal broadening near Fermi surface
+# smearing_method: "fermi" # "none" | "fermi" | "gauss"
+# smearing_sigma: 0.01 # smearing width (Hartree), adjustable 0.001-0.05
+# Stage 3: Newton-Raphson (second-order SCF) refinement
+# Activated when Stage 2 fails to converge
+scf_stage1_rough: true
+scf_stage3_newton: true
+newton_max_cycle: 10
+newton_conv_tol: 1.0e-12
+
+localization_method: "pm"
+# ── Pipek-Mezey localization parameters ──────────────────────
+# Only effective when localization_method is "pm".
+pm_pop_method: "Mulliken" # PM 1989 原始定义基于 Mulliken 布居（PySCF 默认 meta-lowdin）
+pm_conv_tol: 1.0e-8 # convergence threshold
+pm_max_cycle: 500 # max iterations
+pm_init_guess: "atomic" # "atomic" | null (use mo_coeff directly)
+pm_exponent: 2 # PM norm power: 2 or 4
+
+cpt_cas_type: "uno" # "uno" | "uno_type2" | "luo" | "avas" | "alpha_sl"
+#                                 # "uno": UNO (split-localized natural orbitals)
+#                                 # "luo": LUO (alpha/beta separately localized)
+#                                 # "avas": AVAS (projection-based, requires additional config)
+#                                 # "alpha_sl": Chan 2014 alpha split-localization
+
+# ── Orbital visualization ───────────────────────────────────────
+generate_cubes: true # false = skip cube file generation
+cube_grid: "120x120x120" # cube grid resolution
+pw_plot_threshold:
+  0.01
+  # save cube+PNG for orbitals with proj_weight >= this threshold
+  # (unset = active space only, default)
+render_png: true # false = skip orbital HTML gallery generation
+png_isovalue: 0.05 # isosurface threshold for rendering
+
+# ── DMRG settings ────────────────────────────────────────────
+dmrg_symm_type: "sz" # "sz" (determinant) | "su2" (spin-adapted CSF)

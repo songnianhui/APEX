@@ -1,0 +1,173 @@
+{
+  "_file_role": "Chan 2026 benchmark reference for oxidized Fe2S2(SCH3)4 using the (20o,30e) active-space model.",
+  "_comment": "This file stores the directly extracted observables from Supplementary Tables 5 and 7 of the 2026 FeMoco paper for the oxidized [2Fe-2S] model. Reported table energies are active-space energies; E_total is recovered as E_core + E_active using the paper's quoted E_core.",
+  "source": {
+    "paper": "2026-Classical solution of the FeMo-cofactor model to chemical accuracy and its implications",
+    "pages": "47-49",
+    "tables": [
+      "Supplementary Table 5",
+      "Supplementary Table 7"
+    ],
+    "system": "[Fe2S2(SCH3)4]^{2-}",
+    "formal_description": "Fe(III)-Fe(III) dimer",
+    "active_space": "(20o,30e)"
+  },
+  "core_energy_hartree": -4976.26532397,
+  "table5_ucc_series": [
+    {
+      "theory": "UHF",
+      "e_active_hartree": -116.512692,
+      "e_total_hartree": -5092.77801597,
+      "s2": 4.89315,
+      "two_s": 3.535703,
+      "two_sz_fe1": -4.197729,
+      "two_sz_fe2": 4.200378
+    },
+    {
+      "theory": "UCCSD",
+      "e_active_hartree": -116.58047,
+      "e_total_hartree": -5092.84579397,
+      "s2": 3.601338,
+      "two_s": 2.924965,
+      "two_sz_fe1": -3.916799,
+      "two_sz_fe2": 3.919647
+    },
+    {
+      "theory": "UCCSD(T)",
+      "e_active_hartree": -116.596038,
+      "e_total_hartree": -5092.86136197,
+      "s2": 3.104838,
+      "two_s": 2.663243,
+      "two_sz_fe1": -3.818287,
+      "two_sz_fe2": 3.821016
+    },
+    {
+      "theory": "UCCSDT",
+      "e_active_hartree": -116.600883,
+      "e_total_hartree": -5092.86620697,
+      "s2": 2.719797,
+      "two_s": 2.44662,
+      "two_sz_fe1": -3.763482,
+      "two_sz_fe2": 3.766248
+    },
+    {
+      "theory": "UCCSDTQ",
+      "e_active_hartree": -116.604181,
+      "e_total_hartree": -5092.86950497,
+      "s2": 1.600034,
+      "two_s": 1.720319,
+      "two_sz_fe1": -3.418594,
+      "two_sz_fe2": 3.421149
+    },
+    {
+      "theory": "UCCSDTQP",
+      "e_active_hartree": -116.604756,
+      "e_total_hartree": -5092.87007997,
+      "s2": 1.077378,
+      "two_s": 1.304238,
+      "two_sz_fe1": -2.93159,
+      "two_sz_fe2": 2.933808
+    },
+    {
+      "theory": "SA-DMRG[D=12k]",
+      "e_active_hartree": -116.605609,
+      "e_total_hartree": -5092.87093297,
+      "s2": 0.0,
+      "two_s": 0.0,
+      "two_sz_fe1": null,
+      "two_sz_fe2": null
+    }
+  ],
+  "table7_udmrg_series": [
+    {
+      "bond_dimension": 100,
+      "e_active_hartree": -116.598906,
+      "e_total_hartree": -5092.86422997,
+      "s2": 3.595044,
+      "two_s": 2.921757,
+      "two_sz_fe1": -3.869613,
+      "two_sz_fe2": 3.870381
+    },
+    {
+      "bond_dimension": 200,
+      "e_active_hartree": -116.601798,
+      "e_total_hartree": -5092.86712197,
+      "s2": 2.561228,
+      "two_s": 2.353343,
+      "two_sz_fe1": -3.734341,
+      "two_sz_fe2": 3.734903
+    },
+    {
+      "bond_dimension": 400,
+      "e_active_hartree": -116.603444,
+      "e_total_hartree": -5092.86876797,
+      "s2": 1.551455,
+      "two_s": 1.684366,
+      "two_sz_fe1": -3.409451,
+      "two_sz_fe2": 3.411074
+    },
+    {
+      "bond_dimension": 600,
+      "e_active_hartree": -116.604077,
+      "e_total_hartree": -5092.86940097,
+      "s2": 1.075703,
+      "two_s": 1.302783,
+      "two_sz_fe1": -3.082867,
+      "two_sz_fe2": 3.084524
+    },
+    {
+      "bond_dimension": 800,
+      "e_active_hartree": -116.604421,
+      "e_total_hartree": -5092.86974497,
+      "s2": 0.789053,
+      "two_s": 1.038679,
+      "two_sz_fe1": -2.762896,
+      "two_sz_fe2": 2.7644
+    },
+    {
+      "bond_dimension": 1000,
+      "e_active_hartree": -116.604571,
+      "e_total_hartree": -5092.86989497,
+      "s2": 0.492156,
+      "two_s": 0.72297,
+      "two_sz_fe1": -2.321323,
+      "two_sz_fe2": 2.322487
+    },
+    {
+      "bond_dimension": 1200,
+      "e_active_hartree": -116.604751,
+      "e_total_hartree": -5092.87007497,
+      "s2": 0.135284,
+      "two_s": 0.241425,
+      "two_sz_fe1": -1.330488,
+      "two_sz_fe2": 1.331083
+    },
+    {
+      "bond_dimension": 1600,
+      "e_active_hartree": -116.60517,
+      "e_total_hartree": -5092.87049397,
+      "s2": 0.014958,
+      "two_s": 0.029482,
+      "two_sz_fe1": -0.439387,
+      "two_sz_fe2": 0.439701
+    },
+    {
+      "bond_dimension": 2000,
+      "e_active_hartree": -116.605377,
+      "e_total_hartree": -5092.87070097,
+      "s2": 0.010609,
+      "two_s": 0.020997,
+      "two_sz_fe1": -0.373072,
+      "two_sz_fe2": 0.373298
+    },
+    {
+      "bond_dimension": 2400,
+      "e_active_hartree": -116.605476,
+      "e_total_hartree": -5092.87079997,
+      "s2": 0.011585,
+      "two_s": 0.022907,
+      "two_sz_fe1": -0.391477,
+      "two_sz_fe2": 0.391762
+    }
+  ]
+}

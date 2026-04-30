@@ -1,0 +1,90 @@
+# FeMo-co Chan 2019 workflow configuration
+# Reference: Li, Li, Dattani, Umrigar & Chan, JCP 150, 024302 (2019)
+# Active space: CAS(113e, 76o)
+#
+# To use with a new molecule: copy this file, update the fields below,
+# and provide a new XYZ structure file.
+
+molecule:
+  name: "FeMo-co"
+  source: "femoco.xyz"       # Place coordinates in same directory
+  charge: -1                  # Total charge of the QM cluster
+  target_spin: 1.5            # S = 3/2 (from EPR)
+  high_spin: 17.5             # S = 35/2 for ferromagnetic DFT initial guess
+
+dft:
+  functional: "B3LYP"
+  # Per-atom basis set (Chan 2019: TZP-DKH for metals/sulfur, def2-SVP for light atoms)
+  basis:
+    Fe: "TZP-DKH"
+    Mo: "TZP-DKH"
+    S: "TZP-DKH"
+    C: "def2-SVP"
+    H: "def2-SVP"
+    O: "def2-SVP"
+    N: "def2-SVP"
+  # Default basis for atoms not listed above
+  default_basis: "def2-SVP"
+  # Relativistic Hamiltonian
+  x2c: true                   # spin-free X2C
+  # Solvent model
+  solvent: "ddCOSMO"
+  solvent_epsilon: 4.0
+  # SCF parameters
+  conv_tol: 1.0e-8
+  max_cycle: 2000
+
+localization:
+  method: "pipek_mezey"       # Pipek-Mezey (Chan 2019 uses PM, not Boys)
+  pop_method: "mulliken"
+  # UNO occupation thresholds for block splitting
+  occ_core: 1.98              # occ > this → core block
+  occ_virtual: 0.02           # occ < this → virtual block
+
+active_space:
+  target_orbitals: 76
+  target_electrons: 113
+  # Orbital selection rules, in priority order
+  # The script selects orbitals matching each rule until target_orbitals is reached
+  selection_rules:
+    - atom_type: "Fe"
+      ao_type: "3d"           # angular momentum l=2
+      count: 35               # 7 Fe x 5 d-orbitals
+      min_character: 0.30     # minimum d-character fraction
+    - atom_type: "Mo"
+      ao_type: "4d"
+      count: 5                # 1 Mo x 5 d-orbitals
+      min_character: 0.30
+    - atom_type: "S"
+      ao_type: "3p"           # angular momentum l=1
+      count: 27               # bridging sulfur 3p orbitals
+      min_character: 0.30
+    - atom_type: "C"
+      ao_type: "2s+2p"        # interstitial carbon
+      count: 4
+      min_character: 0.20
+    - atom_type: "ligand"
+      ao_type: "any"
+      count: 5                # remaining ligand orbitals to reach 76
+
+dmrg:
+  bond_dims: [2000, 4000]
+  n_sweeps: 20
+  n_threads: 4
+  stack_mem_GB: 8             # memory per DMRG run
+  scratch_dir: "scratch_dmrg"
+
+output:
+  fcidump: "FCIDUMP_w76"
+  checkpoint: "femoco_uks.chk"
+  dmrg_scratch: "scratch_dmrg"
+
+# Reference values for verification (Chan 2019)
+reference:
+  norb: 76
+  nelec: 113
+  ms2: 3                      # 2*S for S=3/2 (PySCF convention: 2*Sz)
+  fcidump_url: "https://github.com/zhendongli2008/Active-space-model-for-FeMoco"
+  # DMRG energies from paper (to be filled after first successful run)
+  dmrg_D2000: null
+  dmrg_D4000: null

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apex-cas"
+version = "0.1.0"
+description = "Automated Active Space Construction for Transition Metal Clusters"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "ase>=3.22",
+    "pyyaml>=6.0",
+    "h5py>=3.0",
+    "pyscf>=2.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov"]
+
+[project.scripts]
+apex-cas = "apex_cas.main:main"
+
+[tool.setuptools.packages.find]
+include = ["apex_cas*"]
+
+[tool.setuptools.package-data]
+apex_cas = ["data/*.yaml"]

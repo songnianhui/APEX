@@ -1,0 +1,116 @@
+# [Fe2S2(SCH3)4]^{2-} CAS Settings
+# Oxidized Fe(III)-Fe(III) dimer, ground state S=0
+# Thiolate SCH3- ligands (standard Chan 2017 model)
+#
+# Charge balance:
+#   Total charge = -2
+#   Ligands: 2 x mu-S(2-) + 4 x SCH3(-) = -4 + (-4) = -8
+#   Metal oxidation sum = -2 - (-8) = +6 -> 2xFe(III)
+#
+# Spin states:
+#   Ground state: S=0 (antiferromagnetic coupling of two S=5/2 Fe(III))
+#   High-spin:    S=5 (ferromagnetic: 5/2 + 5/2 = 5)
+#
+# Active space (Chan 2017):
+#   CAS(30e, 20o) = 10 Fe-3d + 10 mu-S-3p/bonding
+#
+# Reference: Li & Chan, JCTC 13, 2681 (2017) — Fe2S2 model
+#            Zhai et al., arXiv:2601.04621 (2026) — screening pipeline
+#            Sharma et al., arXiv:1408.5080 (2014) — Chan 2014 alpha_sl method
+
+charge: -2
+spin: 0.0 # CAS target: S=0 singlet
+scf_spin: 5.0 # SCF reference: S=5 high-spin (Fe(III)-Fe(III) ferromagnetic)
+# cluster_info_path: "inputs/cluster_info.yaml"
+scf_method: "uks"
+xc_functional: "BP86"
+
+# ── Basis set ──────────────────────────────────────────────────
+# Chan 2014 ORCA reproduction: Ahlrichs VDZ (Schäfer 1992, ORCA name: SVP)
+# Not available in PySCF built-in; use pre-generated NWChem basis file
+basis_set_file: "ref/basis/ahlrichs_vdz.nwchem"
+# Chan 2017 original: TZP-DKH basis (Jorge 2009, contracted Gaussian for DKH) + sf-X2C
+# basis_set_default: "tzp-dkh"
+
+# ── Relativistic & Solvation ───────────────────────────────────
+# Chan 2014 ORCA: no relativistic correction
+relativistic: "none"
+# Chan 2017 original: sf-X2C
+# relativistic: "sf-x2c"
+solvation_model: "none"
+
+# ── RI / density fitting ──────────────────────────────────────
+# ORCA BP86 纯 GGA: RI-J only (RIJONX / Split-RI-J)
+density_fit: true
+density_fit_only_dfj: true
+# density_fit_auxbasis: ""        # auto-matched by PySCF (def2-svp-ri-j)
+
+# ── DFT integration grid ──────────────────────────────────────
+# ORCA GridX2 ≈ PySCF level 5; disable density pruning (ORCA has no such feature)
+grids_level: 5
+grids_small_rho_cutoff: 0
+grids_prune: "nwchem"
+
+# ── SCF convergence ────────────────────────────────────────────
+conv_tol: 1.0e-10 # ORCA TightSCF ≈ 1e-8
+max_cycle: 500
+scf_verbose: 4
+
+# ── SCF convergence helpers ────────────────────────────────────
+init_guess: "atom"
+# scf_damp: 0.0
+# scf_level_shift: 0.0
+diis_space: 8
+
+frac_occ: false
+smearing_method: "none"
+
+# Stage 3: Newton-Raphson refinement
+# ORCA 不做 SOSCF，关闭以匹配 ORCA SCF 行为
+scf_stage3_newton: false
+
+# ── Orbital localization & CAS construction ────────────────────
+localization_method: "pm"
+
+cpt_cas_type: "alpha_sl" # Chan 2014 alpha split-localization
+#                                 # "uno": UNO (split-localized natural orbitals)
+#                                 # "luo": LUO (alpha/beta separately localized)
+#                                 # "avas": AVAS (projection-based, requires additional config)
+#                                 # "alpha_sl": Chan 2014 alpha split-localization
+#                                 #   UKS high-spin -> alpha MO -> occ/vir localize -> projection select
+
+# ── Orbital visualization ───────────────────────────────────────
+pw_plot_threshold: 0.05
+generate_cubes: true # false = skip cube file generation
+cube_grid: "120x120x120" # cube grid resolution
+render_png: true # false = skip PNG rendering
+png_isovalue: 0.05 # isosurface threshold for PNG
+png_dpi: 300 # DPI for rendered images
+
+
+# ── Expected active space (Chan 2017) ──────────────────────────
+# expected_active_orbitals: 20  # 10 Fe-3d + 10 mu-S-3p/bonding
+# expected_active_electrons: 30
+
+# ── 2017 paper variant (uncomment to switch) ──────────────────
+# # Reference: Li & Chan, JCTC 13, 2681 (2017) — original TZP-DKH + sf-X2C settings
+# basis_set_default: "tzp-dkh"
+# relativistic: "sf-x2c"
+# conv_tol: 1.0e-12
+# init_guess: "minao"
+# scf_damp: 0.3
+# diis_space: 10
+# frac_occ: true
+# smearing_method: "fermi"
+# smearing_sigma: 0.01
+# scf_stage3_newton: true
+# newton_max_cycle: 10
+# newton_conv_tol: 1.0e-10
+
+# ── 2019 paper variant (uncomment to switch) ──────────────────
+# # Reference: Li et al., JCP 2019 (arXiv:1809.10307)
+# xc_functional: "B3LYP"
+# basis_set_default: "tzp-dkh"
+# relativistic: "sf-x2c"
+# solvation_model: "ddcosmo"
+# solvation_epsilon: 4.0

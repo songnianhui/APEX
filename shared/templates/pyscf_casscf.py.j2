@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""
+PySCF CASSCF with active space specification.
+Generated from template: pyscf_casscf.py.j2
+Label: {{ label }}
+"""
+
+import numpy as np
+from pyscf import gto, scf, mcscf, lib, ao2mo
+
+# ---------------------------------------------------------------------------
+# Molecule definition
+# ---------------------------------------------------------------------------
+mol = gto.M(
+    atom="""{{ geometry }}""",
+    basis="{{ basis_set }}",
+    charge={{ charge }},
+    spin={{ spin }},
+    verbose=4,
+    output="{{ label }}_casscf.out",
+    symmetry=False,
+)
+
+print("=" * 70)
+print("PySCF CASSCF")
+print("Label          : {{ label }}")
+print("Basis          : {{ basis_set }}")
+print("Charge         : {{ charge }}")
+print("Spin (2S+1)    : {{ spin }}")
+print("N electrons    : {{ n_electrons }}")
+print("N orbitals     : {{ n_orbitals }}")
+print("=" * 70)
+
+# ---------------------------------------------------------------------------
+# Active space definition
+# ---------------------------------------------------------------------------
+{% if active_space is defined %}
+{% if active_space.type | default('cas') == 'cas' %}
+# CAS(n_electrons, n_orbitals)
+cas_n_elec = {{ active_space.n_electrons }}
+cas_n_orb = {{ active_space.n_orbitals }}
+print(f"Active space   : CAS({cas_n_elec},{cas_n_orb})")
+{% elif active_space.type == 'ras' %}
+# RAS active space
+ras_spaces = {{ active_space.ras_spaces }}
+ras_nelec = {{ active_space.n_electrons }}
+print(f"Active space   : RAS(n_elec={ras_nelec}, spaces={ras_spaces})")
+{% endif %}
+{% else %}
+# No active_space provided; default to full-valence guess
+# User should supply active_space in context
+raise ValueError("active_space must be defined in context dict")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# UHF reference
+# ---------------------------------------------------------------------------
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+mf.diis_space = 12
+
+{% if config is defined and config.density_fitting is defined and config.density_fitting %}
+mf = mf.density_fit(auxbasis="{{ config.get('aux_basis', 'def2-universal-jfit') }}")
+{% endif %}
+
+print("\n>>> Running UHF reference ...")
+uhf_energy = mf.kernel()
+assert mf.converged, "UHF did not converge!"
+
+nocc_a = int(np.sum(mf.mo_occ[0] > 0))
+nocc_b = int(np.sum(mf.mo_occ[1] > 0))
+print(f"UHF Energy: {uhf_energy:.12f} Hartree")
+print(f"  Alpha occ/vir: {nocc_a}/{mf.mo_occ[0].size - nocc_a}")
+print(f"  Beta  occ/vir: {nocc_b}/{mf.mo_occ[1].size - nocc_b}")
+
+# ---------------------------------------------------------------------------
+# Load broken-symmetry MOs if available
+# ---------------------------------------------------------------------------
+{% if config is defined and config.uhf_npz is defined %}
+print("\n>>> Loading broken-symmetry UHF MOs from: {{ config.uhf_npz }}")
+data = np.load("{{ config.uhf_npz }}")
+mf.mo_coeff = (data["mo_coeff_a"], data["mo_coeff_b"])
+mf.mo_occ = (data["mo_occ_a"], data["mo_occ_b"])
+mf.mo_energy = (data["mo_energy_a"], data["mo_energy_b"])
+mf.e_tot = float(data["energy"])
+mf.converged = bool(data["converged"])
+uhf_energy = mf.e_tot
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# Orbital localization / reordering for active space
+# ---------------------------------------------------------------------------
+{% if config is defined and config.orbital_reorder is defined and config.orbital_reorder %}
+print("\n>>> Reordering orbitals for active space selection ...")
+
+{% if active_space is defined and active_space.orbital_indices is defined %}
+# User-specified active orbital indices (0-based)
+active_orb_idx = {{ active_space.orbital_indices }}
+
+# Convert to sorted list and build frozen list
+all_orbs = list(range(mf.mo_occ[0].size))
+inactive_orbs = [i for i in all_orbs if i not in active_orb_idx]
+
+# Rotate MOs to put active orbitals in the right position
+# Use PySCF's sort_mo functionality
+from pyscf.mcscf import avas
+
+{% if active_space.fragment_atoms is defined %}
+# Use fragment atoms to identify active space via AO projection
+fragment_atoms = {{ active_space.fragment_atoms }}
+{% endif %}
+{% endif %}
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# CASSCF calculation
+# ---------------------------------------------------------------------------
+{% if active_space is defined and active_space.type | default('cas') == 'cas' %}
+print(f"\n>>> Running CASSCF({cas_n_elec}, {cas_n_orb}) ...")
+mc = mcscf.CASSCF(mf, cas_n_orb, cas_n_elec)
+
+{% elif active_space is defined and active_space.type == 'ras' %}
+print(f"\n>>> Running RASSCF ...")
+# RAS(1, RAS2, RAS3) hole limit and particle limit
+ras1_hole_limit = {{ active_space.get('ras1_hole_limit', 0) }}
+ras3_particle_limit = {{ active_space.get('ras3_particle_limit', 0) }}
+mc = mcscf.RASSCF(
+    mf,
+    ras_spaces,
+    ras_nelec,
+    ras1_hole_limit=ras1_hole_limit,
+    ras3_particle_limit=ras3_particle_limit,
+)
+{% endif %}
+
+# --- CASSCF convergence parameters ---
+mc.max_cycle_macro = {{ config.get('casscf_max_cycle_macro', 2000) | default(2000) }}
+mc.max_cycle_micro = {{ config.get('casscf_max_cycle_micro', 4) | default(4) }}
+mc.conv_tol = {{ config.get('casscf_conv_tol', 1e-8) | default(1e-8) }}
+mc.fcisolver.max_cycle = {{ config.get('fci_max_cycle', 2000) | default(2000) }}
+mc.fcisolver.conv_tol = {{ config.get('fci_conv_tol', 1e-8) | default(1e-8) }}
+
+# --- State-averaged CASSCF ---
+{% if config is defined and config.state_average is defined %}
+n_states = {{ config.state_average.n_states | default(1) }}
+weights = {{ config.state_average.weights }}
+print(f"State-averaged CASSCF with {n_states} states, weights = {weights}")
+mc = mcscf.state_average_(mc, weights)
+{% endif %}
+
+# --- Frozen orbitals in CASSCF ---
+{% if config is defined and config.frozen_casscf is defined %}
+mc.frozen = {{ config.frozen_casscf }}
+print(f"Frozen orbitals in CASSCF: {mc.frozen}")
+{% endif %}
+
+# --- Auxiliary basis for density fitting in CASSCF ---
+{% if config is defined and config.casscf_density_fitting is defined and config.casscf_density_fitting %}
+mc = mcscf.DFCASSCF(mc, cas_n_orb, cas_n_elec)
+print("Using density-fitted CASSCF")
+{% endif %}
+
+# --- Initial guess from natural orbitals ---
+{% if config is defined and config.use_natural_orbitals is defined and config.use_natural_orbitals %}
+print("\n>>> Generating initial guess from UHF natural orbitals ...")
+# Use UHF natural orbitals as CASSCF initial guess
+dm1 = mf.make_rdm1()
+# For UHF, dm1 is a tuple (dm_a, dm_b)
+# We build spin-traced density for NO analysis
+dm_spin_traced = dm1[0] + dm1[1]
+eigvals, eigvecs = np.linalg.eigh(dm_spin_traced)
+# Sort by occupation (descending)
+idx = np.argsort(eigvals)[::-1]
+eigvals = eigvals[idx]
+eigvecs = eigvecs[:, idx]
+# Transform MO coefficients
+mo_coeff_combined = mf.mo_coeff
+{% endif %}
+
+# --- Run CASSCF ---
+cas_energy = mc.kernel()
+casscf_energy = mc.e_tot
+
+print(f"\n{'=' * 70}")
+print(f"UHF Reference Energy:  {uhf_energy:.12f}")
+print(f"CASSCF Total Energy:   {casscf_energy:.12f}")
+print(f"CASSCF Converged:      {mc.converged}")
+print(f"  Active space E:      {mc.e_cas:.12f}")
+{% if config is defined and config.state_average is defined %}
+for ist, e in enumerate(mc.e_tot if isinstance(mc.e_tot, (list, np.ndarray)) else [mc.e_tot]):
+    print(f"  State {ist} energy:   {e:.12f}")
+{% endif %}
+print(f"{'=' * 70}")
+
+# ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
+# CI coefficients and natural occupation numbers
+{% if active_space is defined and active_space.type | default('cas') == 'cas' %}
+try:
+    natorb_occ = mc.fcisolver.get_occ(mc.ci, cas_n_orb, cas_n_elec)
+    print(f"\nNatural orbital occupations in active space:")
+    for i, occ in enumerate(natorb_occ):
+        print(f"  Orbital {i:3d}: {occ:.6f}")
+except Exception as e:
+    print(f"Could not compute natural occupations: {e}")
+{% endif %}
+
+# <S^2> expectation value
+try:
+    ss = mc.fcisolver.spin_square(mc.ci, cas_n_orb, cas_n_elec)[0]
+    print(f"\n<S^2> = {ss:.6f}  (2S+1 ~ {np.sqrt(ss + 0.25) * 2:.4f})")
+except Exception:
+    pass
+
+# ---------------------------------------------------------------------------
+# Save results
+# ---------------------------------------------------------------------------
+save_dict = {
+    "uhf_energy": uhf_energy,
+    "casscf_total": casscf_energy,
+    "casscf_e_cas": mc.e_cas,
+    "casscf_converged": mc.converged,
+    "mo_coeff_a": mc.mo_coeff[0],
+    "mo_coeff_b": mc.mo_coeff[1],
+    "ci_vector": np.array(mc.ci) if mc.ci is not None else np.array([]),
+    "cas_n_elec": cas_n_elec,
+    "cas_n_orb": cas_n_orb,
+}
+
+{% if config is defined and config.save_dm is defined and config.save_dm %}
+try:
+    dm1_cas = mc.make_rdm1()
+    dm2_cas = mc.make_rdm2()
+    save_dict["dm1_cas_a"] = dm1_cas[0]
+    save_dict["dm1_cas_b"] = dm1_cas[1]
+    save_dict["dm2_cas"] = dm2_cas
+except Exception as e:
+    print(f"Could not compute RDMs: {e}")
+{% endif %}
+
+np.savez("{{ label }}_casscf_results.npz", **{k: v for k, v in save_dict.items()})
+print(f"\nResults saved to {{ label }}_casscf_results.npz")
+
+# ---------------------------------------------------------------------------
+# Export for downstream DMRG / post-CASSCF
+# ---------------------------------------------------------------------------
+{% if config is defined and config.export_for_dmrg is defined and config.export_for_dmrg %}
+print("\n>>> Exporting one- and two-electron integrals for DMRG ...")
+# One-electron integrals in MO basis
+h1eff = mc.get_h1eff()
+# Two-electron integrals in MO basis (active space only)
+h2eff = mc.get_h2eff()
+np.save("{{ label }}_h1eff.npy", h1eff)
+np.save("{{ label }}_h2eff.npy", h2eff)
+np.save("{{ label }}_casscf_mo_a.npy", mc.mo_coeff[0])
+np.save("{{ label }}_casscf_mo_b.npy", mc.mo_coeff[1])
+print("Integrals exported.")
+{% endif %}
+
+print("\nDone.")

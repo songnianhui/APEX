@@ -1,0 +1,34 @@
+# APEX_Filter settings for [Fe4S4H4]2-
+#
+# Intended use:
+#   1. Run `apex-cas compute`
+#   2. Run `apex-cas fcidump`
+#   3. Run `apex-filter load`
+#   4. Continue with `enumerate -> uhf -> ...`
+
+apex_cas_case_dir: examples/fe4s4h4
+structure_path: examples/fe4s4h4/inputs/fe4s4h4.xyz
+fcidump_path: outputs/fcidump/FCIDUMP.*
+
+charge: -2
+spin: 0.0
+
+# Keep the full-cluster point group as metadata, but use the literature
+# 4Fe-4S cubane family definition for downstream family labels.
+family_scheme: "literature_fe4s4_cubane"
+config_reduction_mode: "none"
+
+# Reuse the same method semantics as the CAS side unless explicitly overridden.
+scf_method: "uks"
+xc_functional: "BP86"
+basis_set_default: "tzp-dkh"
+relativistic: "sf-x2c"
+solvation_model: "none"
+
+# Conservative default filtering funnel for a medium-sized cubane test case.
+filtration:
+  style: "conservative"
+  n_final: 6
+  code: "pyscf"
+
+workdir: examples/fe4s4h4/filter_output

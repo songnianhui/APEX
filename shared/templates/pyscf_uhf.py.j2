@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""
+PySCF Broken-Symmetry UHF with spin-flip initial guess.
+Generated from template: pyscf_uhf.py.j2
+Label: {{ label }}
+"""
+
+import numpy as np
+from pyscf import gto, scf, lib
+
+# ---------------------------------------------------------------------------
+# Molecule definition
+# ---------------------------------------------------------------------------
+mol = gto.M(
+    atom="""{{ geometry }}""",
+    basis="{{ basis_set }}",
+    charge={{ charge }},
+    spin={{ spin }},
+    verbose=4,
+    output="{{ label }}_uhf.out",
+    symmetry=False,
+)
+
+print("=" * 70)
+print("PySCF Broken-Symmetry UHF")
+print("Label        : {{ label }}")
+print("Basis        : {{ basis_set }}")
+print("Charge       : {{ charge }}")
+print("Spin (2S+1)  : {{ spin }}")
+print("N electrons  : {{ n_electrons }}")
+print("N orbitals   : {{ n_orbitals }}")
+print("=" * 70)
+
+# ---------------------------------------------------------------------------
+# High-spin UHF: either load from pre-computed npz or compute from scratch
+# ---------------------------------------------------------------------------
+{% if highspin_npz is defined and highspin_npz %}
+print("\n>>> Loading pre-computed high-spin UHF from: {{ highspin_npz }}")
+hs_data = np.load("{{ highspin_npz }}")
+dm_a = hs_data["dm_a"]
+dm_b = hs_data["dm_b"]
+hs_energy = float(hs_data["energy"])
+hs_converged = bool(hs_data["converged"])
+print(f"  High-spin energy: {hs_energy:.12f} Hartree")
+print(f"  Converged: {hs_converged}")
+
+# Reconstruct mf object from saved MOs for spin_square, etc.
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+mf.diis_space = 12
+mf.mo_coeff = (hs_data["mo_coeff_a"], hs_data["mo_coeff_b"])
+mf.mo_occ = (hs_data["mo_occ_a"], hs_data["mo_occ_b"])
+mf.mo_energy = (hs_data["mo_energy_a"], hs_data["mo_energy_b"])
+mf.e_tot = hs_energy
+mf.converged = hs_converged
+
+S = mol.intor_symmetric("int1e_ovlp")
+
+{% if d_count_targets is defined and d_count_targets %}
+# d-count encoding already applied in high-spin pre-computation — skipped
+print("  d-count encoding: already applied (from high-spin npz)")
+{% endif %}
+
+{% else %}
+# ---------------------------------------------------------------------------
+# Step 1: Converge the high-spin UHF solution first
+# ---------------------------------------------------------------------------
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+mf.diis_space = 12
+
+# --- Level shift / damping for difficult convergence ----------------------
+{% if config is defined and config.level_shift is defined %}
+mf.level_shift = {{ config.level_shift }}
+{% endif %}
+{% if config is defined and config.damp is defined %}
+mf.damp = {{ config.damp }}
+{% endif %}
+
+# --- DIIS -----------------------------------------------------------------
+{% if config is defined and config.diis is defined %}
+mf.diis = {{ config.diis }}
+{% else %}
+mf.diis = True
+{% endif %}
+
+# --- Density fitting (RI) -------------------------------------------------
+{% if config is defined and config.density_fitting is defined and config.density_fitting %}
+mf = mf.density_fit(auxbasis="{{ config.get('aux_basis', 'def2-universal-jfit') }}")
+{% endif %}
+
+print("\n>>> Step 1: Converging high-spin UHF ...")
+mf.kernel()
+
+{% if d_count_targets is defined and d_count_targets %}
+# ---------------------------------------------------------------------------
+# Step 1b: Encode oxidation-dependent d-electron populations
+# ---------------------------------------------------------------------------
+print("\n>>> Step 1b: Encoding oxidation-dependent d-electron populations ...")
+dm_a, dm_b = mf.make_rdm1()
+S = mol.intor_symmetric("int1e_ovlp")
+
+d_count_map = {{ d_count_targets }}    # {site_idx: d_electron_count}
+metal_atom_idx = {{ metal_atom_indices }}
+
+for site_idx, target_d in d_count_map.items():
+    atom_idx = metal_atom_idx[site_idx]
+    aoslice = mol.aoslice_by_atom()[atom_idx]
+    ao_s, ao_e = aoslice[2], aoslice[3]
+
+    # Locate d-type AO functions (angular momentum l=2) on this atom
+    d_ao_start, d_ao_end = None, None
+    bas_offset = 0
+    for ibas in range(mol.nbas):
+        l_ang = mol.bas_angular(ibas)
+        nctr = mol.bas_nctr(ibas)
+        nshells = nctr * (2 * l_ang + 1)
+        if bas_offset + nshells > ao_s and bas_offset < ao_e:
+            if l_ang == 2:  # d-type
+                if d_ao_start is None:
+                    d_ao_start = max(bas_offset, ao_s)
+                d_ao_end = min(bas_offset + nshells, ao_e)
+        bas_offset += nshells
+
+    if d_ao_start is not None and d_ao_end is not None:
+        nd = d_ao_end - d_ao_start  # typically 5 for a single zeta d-shell
+        n_alpha = min(target_d, nd)   # high-spin: fill alpha first
+        n_beta = max(0, target_d - nd)
+
+        # Construct d-block density matrices with correct occupations
+        # Alpha d-block: n_alpha electrons in nd orbitals
+        dm_a_d = dm_a[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))].copy()
+        evals_a, evecs_a = np.linalg.eigh(dm_a_d)
+        new_evals_a = np.zeros(nd)
+        new_evals_a[:n_alpha] = 1.0
+        dm_a[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))] = \
+            evecs_a @ np.diag(new_evals_a) @ evecs_a.T
+
+        # Beta d-block: n_beta electrons in nd orbitals
+        dm_b_d = dm_b[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))].copy()
+        evals_b, evecs_b = np.linalg.eigh(dm_b_d)
+        new_evals_b = np.zeros(nd)
+        new_evals_b[:n_beta] = 1.0
+        dm_b[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))] = \
+            evecs_b @ np.diag(new_evals_b) @ evecs_b.T
+
+        print(f"  Site {site_idx} (atom {atom_idx}): d_count={target_d}, "
+              f"alpha_occ={n_alpha}, beta_occ={n_beta}")
+    else:
+        print(f"  WARNING: Could not locate d-orbitals on site {site_idx} (atom {atom_idx})")
+{% endif %}
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# Step 2: Spin-flip initial guess for broken-symmetry state
+# ---------------------------------------------------------------------------
+{% if spin_assignment is defined and minority_sites is defined %}
+# Apply spin-flip on minority sites to generate broken-symmetry guess.
+# spin_assignment maps site_index -> spin_label ('alpha' or 'beta')
+# minority_sites are the sites whose spin will be flipped.
+print("\n>>> Step 2: Building spin-flip initial guess ...")
+
+dm_a, dm_b = mf.make_rdm1()
+
+# Build AO overlap matrix for Mulliken population analysis
+S = mol.intor_symmetric("int1e_ovlp")
+
+# Compute Mulliken populations per atom for alpha and beta densities
+def mulliken_pop_per_atom(dm, mol, S):
+    """Return array of Mulliken populations [natom]."""
+    pop = np.zeros(mol.natm)
+    aoslices = mol.aoslice_by_atom()
+    for ia in range(mol.natm):
+        i0, i1 = aoslices[ia][2], aoslices[ia][3]
+        pop[ia] = np.einsum("ij,ji->", dm[np.ix_(range(i0, i1), range(i0, i1))],
+                                          S[np.ix_(range(i0, i1), range(i0, i1))])
+    return pop
+
+pop_a = mulliken_pop_per_atom(dm_a, mol, S)
+pop_b = mulliken_pop_per_atom(dm_b, mol, S)
+
+# Spin density per atom = pop_a - pop_b
+spin_density = pop_a - pop_b
+print("High-spin Mulliken spin densities per atom:")
+for ia in range(mol.natm):
+    print(f"  Atom {ia:3d}: Sz = {spin_density[ia]:+.4f}")
+
+# Flip spin density on minority sites
+flip_factor = 2.0
+
+# --- D-orbital assignment: adjust beta population ---------------------------
+# For metals with d-electron count > 5 (e.g., Fe(II) d6), the high-spin
+# state has all 5 d-orbitals singly occupied. The extra electron pairs
+# into one d-orbital. d_orbital_assignments specifies which orbital (0-4)
+# gets the beta electron, overriding the default (orbital 0).
+{% if d_orbital_assignments is defined and d_orbital_assignments %}
+d_orbital_assignments = {{ d_orbital_assignments }}
+metal_atom_indices = {{ metal_atom_indices }}
+print(f"\n  D-orbital assignments: {d_orbital_assignments}")
+
+for site_idx, d_idx in d_orbital_assignments.items():
+    atom_idx = metal_atom_indices[site_idx]
+    aoslice = mol.aoslice_by_atom()[atom_idx]
+    ao_s, ao_e = aoslice[2], aoslice[3]
+
+    # Find d-type AO functions (angular momentum l=2) on this atom
+    d_ao_start = None
+    d_ao_end = None
+    bas_offset = 0
+    for ibas in range(mol.nbas):
+        l_ang = mol.bas_angular(ibas)
+        nctr = mol.bas_nctr(ibas)
+        nshells = nctr * (2 * l_ang + 1)
+        if bas_offset + nshells > ao_s and bas_offset < ao_e:
+            if l_ang == 2:  # d-type
+                if d_ao_start is None:
+                    d_ao_start = max(bas_offset, ao_s)
+                d_ao_end = min(bas_offset + nshells, ao_e)
+        bas_offset += nshells
+
+    if d_ao_start is not None and d_ao_end is not None and (d_ao_end - d_ao_start) > d_idx:
+        # Diagonalize the beta d-block to find natural orbital occupations
+        d_block = dm_b[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))]
+        eigvals, eigvecs = np.linalg.eigh(d_block)
+
+        # Sort by occupation (descending) — highest occ first
+        sort_idx = np.argsort(eigvals)[::-1]
+        eigvals = eigvals[sort_idx]
+        eigvecs = eigvecs[:, sort_idx]
+
+        # Swap: move beta population from natural orbital 0 (default paired)
+        # to natural orbital d_idx
+        if d_idx > 0 and d_idx < len(eigvals):
+            swap = np.eye(len(eigvals))
+            swap[:, [0, d_idx]] = swap[:, [d_idx, 0]]
+            rotated_eigvecs = eigvecs @ swap
+
+            # Reconstruct beta d-block with swapped occupations
+            new_d_block = rotated_eigvecs @ np.diag(eigvals) @ rotated_eigvecs.T
+            dm_b[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))] = new_d_block
+            print(f"  Metal site {site_idx} (atom {atom_idx}): beta d-orbital {d_idx} assigned")
+        else:
+            print(f"  Metal site {site_idx}: d_idx={d_idx} is default, no swap needed")
+    else:
+        print(f"  WARNING: Could not locate d-orbitals on metal site {site_idx} (atom {atom_idx})")
+{% endif %}
+
+for site in {{ minority_sites }}:
+    atom_idx = {{ metal_atom_indices }}[site]
+    aoslices = mol.aoslice_by_atom()
+    i0, i1 = aoslices[atom_idx][2], aoslices[atom_idx][3]
+    # Swap and scale alpha/beta blocks on this atom
+    dm_a_new = dm_a.copy()
+    dm_b_new = dm_b.copy()
+    dm_a_new[i0:i1, :] = dm_a[i0:i1, :] - flip_factor * (dm_a[i0:i1, :] - dm_b[i0:i1, :]) * 0.5
+    dm_b_new[i0:i1, :] = dm_b[i0:i1, :] - flip_factor * (dm_b[i0:i1, :] - dm_a[i0:i1, :]) * 0.5
+    dm_a[i0:i1, :] = dm_a_new[i0:i1, :]
+    dm_b[i0:i1, :] = dm_b_new[i0:i1, :]
+
+# ---------------------------------------------------------------------------
+# Step 3: Run broken-symmetry UHF with the spin-flipped guess
+# ---------------------------------------------------------------------------
+print("\n>>> Step 3: Running broken-symmetry UHF ...")
+
+# First few cycles with level shift and damping to stabilize BS state
+mf.max_cycle = 20
+mf.diis = True
+mf.level_shift = 0.3   # level shift on virtual orbitals to prevent collapse to HS
+mf.damp = 0.2          # density damping to reduce oscillation
+mf.kernel(dm0=(dm_a, dm_b))
+
+# Continue with reduced level shift for final convergence
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+mf.level_shift = 0.0   # remove level shift for tight convergence
+mf.damp = 0.0
+mf.kernel(dm0=mf.make_rdm1())
+{% else %}
+print("\n>>> Step 2: No spin-flip requested; using converged high-spin state.")
+{% endif %}
+
+uhf_energy = mf.e_tot
+print(f"\n{'=' * 70}")
+print(f"UHF Energy: {uhf_energy:.12f} Hartree")
+print(f"Converged:  {mf.converged}")
+print(f"<S^2>:      {mf.spin_square()[0]:.6f}")
+print(f"  2S+1:     {mf.spin_square()[0] ** 0.5 * 2:.6f}")
+print(f"{'=' * 70}")
+
+# ---------------------------------------------------------------------------
+# Save results
+# ---------------------------------------------------------------------------
+np.savez(
+    "{{ label }}_uhf.npz",
+    energy=uhf_energy,
+    mo_coeff_a=mf.mo_coeff[0],
+    mo_coeff_b=mf.mo_coeff[1],
+    mo_occ_a=mf.mo_occ[0],
+    mo_occ_b=mf.mo_occ[1],
+    mo_energy_a=mf.mo_energy[0],
+    mo_energy_b=mf.mo_energy[1],
+    converged=mf.converged,
+    spin_sq=mf.spin_square()[0],
+    d_orbital_assignments=np.array(list({{ d_orbital_assignments }}.items()) if {{ d_orbital_assignments }} else []),
+)
+
+# ---------------------------------------------------------------------------
+# Orbital analysis
+# ---------------------------------------------------------------------------
+nocc_a = int(np.sum(mf.mo_occ[0] > 0))
+nocc_b = int(np.sum(mf.mo_occ[1] > 0))
+nvir_a = mf.mo_occ[0].size - nocc_a
+nvir_b = mf.mo_occ[1].size - nocc_b
+
+print(f"\nOrbital summary:")
+print(f"  Alpha occupied: {nocc_a}, virtual: {nvir_a}, total: {nocc_a + nvir_a}")
+print(f"  Beta  occupied: {nocc_b}, virtual: {nvir_b}, total: {nocc_b + nvir_b}")
+print(f"  N electrons (alpha): {nocc_a}, (beta): {nocc_b}, (total): {nocc_a + nocc_b}")
+
+# Mulliken spin analysis on final density
+dm_a_final, dm_b_final = mf.make_rdm1()
+pop_a_final = mulliken_pop_per_atom(dm_a_final, mol, S)
+pop_b_final = mulliken_pop_per_atom(dm_b_final, mol, S)
+spin_density_final = pop_a_final - pop_b_final
+print("\nFinal broken-symmetry Mulliken spin densities per atom:")
+for ia in range(mol.natm):
+    print(f"  Atom {ia:3d}: Sz = {spin_density_final[ia]:+.4f}")
+
+print("\nDone.")

@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/
+
+# Pytest
+.pytest_cache/
+
+# QC output files
+*.chk
+*.npz
+*.out
+*.log
+
+# PDF references (large files, keep out of git)
+*.pdf
+.obsidian/
+
+# --- Release exclusions ---
+# Old/legacy code
+agent/
+standaloneLib/
+
+# Pre-release archives
+.APEX_CAS_pre_v1_archive*/
+
+# Development plans (internal)
+plans/
+
+# Computation outputs (large)
+examples/*/outputs/
+examples/*/filter_session/
+
+# Development logs and surveys
+modification_log.md
+survey/
+ref/
+bk_examples.zip
+*.codex
+
+# Backup files
+*.bak
+*.tmp
+
+# Large data files
+*.h5
+*.npy
+*.fci
+FCIDUMP*
+*.dat

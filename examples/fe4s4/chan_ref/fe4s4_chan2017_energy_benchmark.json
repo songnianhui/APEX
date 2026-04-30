@@ -1,0 +1,59 @@
+{
+  "_file_role": "Chan public benchmark reference for Fe4S4(SCH3)4 from the Iron-Sulfur-Clusters README.",
+  "_comment": "This file records the directly published reproducibility energy for the Fe4S4 active-space model from the Chan public Iron-Sulfur-Clusters repository README. The README explicitly states that this energy is approximate and not converged with respect to increasing bond dimension.",
+  "source": {
+    "repository": "https://github.com/zhendongli2008/Active-space-model-for-Iron-Sulfur-Clusters",
+    "file": "README.md",
+    "system": "[Fe4S4(SCH3)4]^{2-}",
+    "active_space": "CAS(54e,36o)",
+    "target_spin": "S=0"
+  },
+  "published_values": {
+    "method": "dmrg(d=4000)",
+    "e_active_hartree": -327.2396369,
+    "e_core_hartree": -8105.56038966,
+    "e_total_hartree": -8432.80002656,
+    "quality_note": "Approximate; reported only for reproducibility and not converged with respect to increasing bond dimension."
+  },
+  "initial_broken_symmetry_guess": {
+    "ms": 0,
+    "spin_up_fe_sites": [
+      "fe1",
+      "fe2"
+    ],
+    "spin_down_fe_sites": [
+      "fe3",
+      "fe4"
+    ]
+  },
+  "fe3d_orbital_indices": [
+    [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    [
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    [
+      24,
+      25,
+      26,
+      27,
+      28
+    ],
+    [
+      29,
+      30,
+      31,
+      32,
+      33
+    ]
+  ]
+}

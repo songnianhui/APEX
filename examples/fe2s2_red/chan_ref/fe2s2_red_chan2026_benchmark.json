@@ -1,0 +1,173 @@
+{
+  "_file_role": "Chan 2026 benchmark reference for reduced Fe2S2(SCH3)4 using the (20o,31e) active-space model.",
+  "_comment": "This file mirrors the reduced Fe2S2 benchmark values extracted from Chan 2026 Supplementary Tables 6 and 8, placed in a dedicated reduced-benchmark workspace.",
+  "source": {
+    "paper": "2026-Classical solution of the FeMo-cofactor model to chemical accuracy and its implications",
+    "pages": "47-50",
+    "tables": [
+      "Supplementary Table 6",
+      "Supplementary Table 8"
+    ],
+    "system": "[Fe2S2(SCH3)4]^{3-}",
+    "formal_description": "Fe(III)-Fe(II) dimer",
+    "active_space": "(20o,31e)"
+  },
+  "core_energy_hartree": -4976.26532397,
+  "table6_ucc_series": [
+    {
+      "theory": "UHF",
+      "e_active_hartree": -116.322099,
+      "e_total_hartree": -5092.58742297,
+      "s2": 4.660419,
+      "two_s": 3.431893,
+      "two_sz_fe1": -3.773833,
+      "two_sz_fe2": 4.125092
+    },
+    {
+      "theory": "UCCSD",
+      "e_active_hartree": -116.361322,
+      "e_total_hartree": -5092.62664597,
+      "s2": 3.294955,
+      "two_s": 2.76561,
+      "two_sz_fe1": -3.603649,
+      "two_sz_fe2": 3.918227
+    },
+    {
+      "theory": "UCCSD(T)",
+      "e_active_hartree": -116.367095,
+      "e_total_hartree": -5092.63241897,
+      "s2": 2.942437,
+      "two_s": 2.573479,
+      "two_sz_fe1": -3.537574,
+      "two_sz_fe2": 3.8668
+    },
+    {
+      "theory": "UCCSDT",
+      "e_active_hartree": -116.372305,
+      "e_total_hartree": -5092.63762897,
+      "s2": 2.276939,
+      "two_s": 2.17927,
+      "two_sz_fe1": -3.332917,
+      "two_sz_fe2": 3.733398
+    },
+    {
+      "theory": "UCCSDTQ",
+      "e_active_hartree": -116.373827,
+      "e_total_hartree": -5092.63915097,
+      "s2": 1.489036,
+      "two_s": 1.63745,
+      "two_sz_fe1": -2.739205,
+      "two_sz_fe2": 3.252087
+    },
+    {
+      "theory": "UCCSDTQP",
+      "e_active_hartree": -116.373996,
+      "e_total_hartree": -5092.63931997,
+      "s2": 1.19727,
+      "two_s": 1.406051,
+      "two_sz_fe1": -2.212663,
+      "two_sz_fe2": 2.777618
+    },
+    {
+      "theory": "SA-DMRG[D=12k]",
+      "e_active_hartree": -116.374322,
+      "e_total_hartree": -5092.63964597,
+      "s2": 0.75,
+      "two_s": 1.0,
+      "two_sz_fe1": null,
+      "two_sz_fe2": null
+    }
+  ],
+  "table8_udmrg_series": [
+    {
+      "bond_dimension": 100,
+      "e_active_hartree": -116.37155,
+      "e_total_hartree": -5092.63687397,
+      "s2": 2.284151,
+      "two_s": 2.183803,
+      "two_sz_fe1": -3.332811,
+      "two_sz_fe2": 3.73807
+    },
+    {
+      "bond_dimension": 200,
+      "e_active_hartree": -116.372867,
+      "e_total_hartree": -5092.63819097,
+      "s2": 1.557705,
+      "two_s": 1.689018,
+      "two_sz_fe1": -2.942814,
+      "two_sz_fe2": 3.408071
+    },
+    {
+      "bond_dimension": 400,
+      "e_active_hartree": -116.373636,
+      "e_total_hartree": -5092.63895997,
+      "s2": 1.017338,
+      "two_s": 1.251522,
+      "two_sz_fe1": -2.30663,
+      "two_sz_fe2": 2.858374
+    },
+    {
+      "bond_dimension": 600,
+      "e_active_hartree": -116.373982,
+      "e_total_hartree": -5092.63930597,
+      "s2": 0.804693,
+      "two_s": 1.053965,
+      "two_sz_fe1": -1.736648,
+      "two_sz_fe2": 2.363313
+    },
+    {
+      "bond_dimension": 800,
+      "e_active_hartree": -116.374146,
+      "e_total_hartree": -5092.63946997,
+      "s2": 0.758738,
+      "two_s": 1.008719,
+      "two_sz_fe1": -1.401038,
+      "two_sz_fe2": 2.072533
+    },
+    {
+      "bond_dimension": 1000,
+      "e_active_hartree": -116.37423,
+      "e_total_hartree": -5092.63955397,
+      "s2": 0.752147,
+      "two_s": 1.002146,
+      "two_sz_fe1": -1.27834,
+      "two_sz_fe2": 1.966404
+    },
+    {
+      "bond_dimension": 1200,
+      "e_active_hartree": -116.374273,
+      "e_total_hartree": -5092.63959697,
+      "s2": 0.75104,
+      "two_s": 1.00104,
+      "two_sz_fe1": -1.238854,
+      "two_sz_fe2": 1.932182
+    },
+    {
+      "bond_dimension": 1600,
+      "e_active_hartree": -116.374306,
+      "e_total_hartree": -5092.63962997,
+      "s2": 0.75077,
+      "two_s": 1.00077,
+      "two_sz_fe1": -1.225353,
+      "two_sz_fe2": 1.920452
+    },
+    {
+      "bond_dimension": 2000,
+      "e_active_hartree": -116.374317,
+      "e_total_hartree": -5092.63964097,
+      "s2": 0.750908,
+      "two_s": 1.000908,
+      "two_sz_fe1": -1.231956,
+      "two_sz_fe2": 1.926105
+    },
+    {
+      "bond_dimension": 2400,
+      "e_active_hartree": -116.374321,
+      "e_total_hartree": -5092.63964497,
+      "s2": 0.751185,
+      "two_s": 1.001184,
+      "two_sz_fe1": -1.243982,
+      "two_sz_fe2": 1.936448
+    }
+  ]
+}

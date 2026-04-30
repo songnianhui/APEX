@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""
+PySCF High-Spin UHF + d-count encoding (shared pre-computation).
+Generated from template: pyscf_uhf_highspin.py.j2
+Group label: {{ label }}
+"""
+
+import numpy as np
+from pyscf import gto, scf, lib
+
+# ---------------------------------------------------------------------------
+# Molecule definition
+# ---------------------------------------------------------------------------
+mol = gto.M(
+    atom="""{{ geometry }}""",
+    basis="{{ basis_set }}",
+    charge={{ charge }},
+    spin={{ spin }},
+    verbose=4,
+    output="{{ label }}_highspin.out",
+    symmetry=False,
+)
+
+print("=" * 70)
+print("PySCF High-Spin UHF (shared pre-computation)")
+print("Group label  : {{ label }}")
+print("Basis        : {{ basis_set }}")
+print("Charge       : {{ charge }}")
+print("Spin (2S+1)  : {{ spin }}")
+print("=" * 70)
+
+# ---------------------------------------------------------------------------
+# High-spin UHF convergence
+# ---------------------------------------------------------------------------
+mf = scf.UHF(mol)
+mf.max_cycle = {{ max_scf_cycles | default(2000) }}
+mf.conv_tol = {{ conv_tol | default(1e-10) }}
+mf.diis_space = 12
+
+# --- Level shift / damping for difficult convergence ----------------------
+{% if config is defined and config.level_shift is defined %}
+mf.level_shift = {{ config.level_shift }}
+{% endif %}
+{% if config is defined and config.damp is defined %}
+mf.damp = {{ config.damp }}
+{% endif %}
+
+# --- DIIS -----------------------------------------------------------------
+{% if config is defined and config.diis is defined %}
+mf.diis = {{ config.diis }}
+{% else %}
+mf.diis = True
+{% endif %}
+
+# --- Density fitting (RI) -------------------------------------------------
+{% if config is defined and config.density_fitting is defined and config.density_fitting %}
+mf = mf.density_fit(auxbasis="{{ config.get('aux_basis', 'def2-universal-jfit') }}")
+{% endif %}
+
+print("\n>>> Converging high-spin UHF ...")
+mf.kernel()
+
+uhf_energy = mf.e_tot
+print(f"\nHigh-Spin UHF Energy: {uhf_energy:.12f} Hartree")
+print(f"Converged: {mf.converged}")
+print(f"<S^2>: {mf.spin_square()[0]:.6f}")
+
+# ---------------------------------------------------------------------------
+# d-count encoding
+# ---------------------------------------------------------------------------
+dm_a, dm_b = mf.make_rdm1()
+S = mol.intor_symmetric("int1e_ovlp")
+
+{% if d_count_targets is defined and d_count_targets %}
+print("\n>>> Encoding oxidation-dependent d-electron populations ...")
+d_count_map = {{ d_count_targets }}
+metal_atom_idx = {{ metal_atom_indices }}
+
+for site_idx, target_d in d_count_map.items():
+    atom_idx = metal_atom_idx[site_idx]
+    aoslice = mol.aoslice_by_atom()[atom_idx]
+    ao_s, ao_e = aoslice[2], aoslice[3]
+
+    d_ao_start, d_ao_end = None, None
+    bas_offset = 0
+    for ibas in range(mol.nbas):
+        l_ang = mol.bas_angular(ibas)
+        nctr = mol.bas_nctr(ibas)
+        nshells = nctr * (2 * l_ang + 1)
+        if bas_offset + nshells > ao_s and bas_offset < ao_e:
+            if l_ang == 2:
+                if d_ao_start is None:
+                    d_ao_start = max(bas_offset, ao_s)
+                d_ao_end = min(bas_offset + nshells, ao_e)
+        bas_offset += nshells
+
+    if d_ao_start is not None and d_ao_end is not None:
+        nd = d_ao_end - d_ao_start
+        n_alpha = min(target_d, nd)
+        n_beta = max(0, target_d - nd)
+
+        dm_a_d = dm_a[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))].copy()
+        evals_a, evecs_a = np.linalg.eigh(dm_a_d)
+        new_evals_a = np.zeros(nd)
+        new_evals_a[:n_alpha] = 1.0
+        dm_a[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))] = \
+            evecs_a @ np.diag(new_evals_a) @ evecs_a.T
+
+        dm_b_d = dm_b[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))].copy()
+        evals_b, evecs_b = np.linalg.eigh(dm_b_d)
+        new_evals_b = np.zeros(nd)
+        new_evals_b[:n_beta] = 1.0
+        dm_b[np.ix_(range(d_ao_start, d_ao_end), range(d_ao_start, d_ao_end))] = \
+            evecs_b @ np.diag(new_evals_b) @ evecs_b.T
+
+        print(f"  Site {site_idx} (atom {atom_idx}): d_count={target_d}, "
+              f"alpha_occ={n_alpha}, beta_occ={n_beta}")
+    else:
+        print(f"  WARNING: Could not locate d-orbitals on site {site_idx} (atom {atom_idx})")
+{% endif %}
+
+# ---------------------------------------------------------------------------
+# Save results
+# ---------------------------------------------------------------------------
+np.savez(
+    "{{ label }}_highspin.npz",
+    energy=uhf_energy,
+    converged=mf.converged,
+    mo_coeff_a=mf.mo_coeff[0],
+    mo_coeff_b=mf.mo_coeff[1],
+    mo_occ_a=mf.mo_occ[0],
+    mo_occ_b=mf.mo_occ[1],
+    mo_energy_a=mf.mo_energy[0],
+    mo_energy_b=mf.mo_energy[1],
+    spin_sq=mf.spin_square()[0],
+    dm_a=dm_a,
+    dm_b=dm_b,
+    d_orbital_assignments=np.array(list({{ d_count_targets }}.items())),
+)
+print(f"\nHigh-spin + d-count encoding saved to {{ label }}_highspin.npz")
+print("Done.")

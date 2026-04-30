@@ -1,0 +1,44 @@
+# [Fe2S2(SCH3)4]^{2-} CAS Settings
+# Reference: Li & Chan, JCTC 2017 (arXiv:1703.04789)
+# Active space: CAS(30e, 20o) = 10 Fe-3d + 10 S-3p
+
+charge: -2
+spin: 0.0 # singlet S=0
+
+scf_method: "uks"
+xc_functional: "BP86"
+
+basis_set_default: "sto-3g" #"tzp-dkh"
+basis_per_element:
+  Fe: "def2-SVP" #"tzp-dkh"
+  S: "def2-SVP" #"tzp-dkh"
+  C: "sto-3g" #"tzp-dkh"  2.5min def2-SVP
+  H: "sto-3g" #"tzp-dkh"
+
+relativistic: "none" #"sf-x2c"
+solvation_model: "none"
+solvation_epsilon: 0.0
+
+conv_tol: 1.0e-10
+max_cycle: 1000
+scf_verbose: 4
+
+# ── SCF convergence helpers ────────────────────────────────────
+init_guess: "minao" # "atom" | "minao" | "huckel" | "vsap"
+scf_damp: 0.3 # density damping (0 = off, try 0.1-0.5)
+scf_level_shift: 0.5 # level shift for virtuals (0 = off, try 0.05-0.3)
+diis_space: 8 # number of DIIS vectors
+
+localization_method: "pm"
+
+# ── 2019 paper variant (uncomment to switch) ──────────────────
+# # Reference: Li et al., JCP 2019 (arXiv:1809.10307), Step 8
+# xc_functional: "B3LYP"
+# basis_set_default: "def2-TZVP"
+# basis_per_element:
+#   Fe: "TZP-DKH"
+#   S: "TZP-DKH"
+#   C: "def2-SVP"
+#   H: "def2-SVP"
+# solvation_model: "ddcosmo"
+# solvation_epsilon: 4.0

@@ -1,0 +1,263 @@
+#!/bin/bash
+#SBATCH --job-name={{ label | replace(' ', '_') }}
+#SBATCH --output={{ label | replace(' ', '_') }}_%j.out
+#SBATCH --error={{ label | replace(' ', '_') }}_%j.err
+#
+# SLURM batch submission script.
+# Generated from template: slurm_job.sh.j2
+# Label: {{ label }}
+#
+# ==============================================================================
+# Resource allocation
+# ==============================================================================
+#SBATCH --nodes={{ config.nodes | default(1) }}
+#SBATCH --ntasks-per-node={{ config.ntasks_per_node | default(1) }}
+#SBATCH --cpus-per-task={{ config.cpus_per_task | default(1) }}
+#SBATCH --mem={{ config.mem | default('8G') }}
+
+{% if config is defined and config.gpu is defined and config.gpu %}
+#SBATCH --gres=gpu:{{ config.gpu_count | default(1) }}
+{% endif %}
+
+{% if config is defined and config.partition is defined %}
+#SBATCH --partition={{ config.partition }}
+{% else %}
+#SBATCH --partition={{ partition | default('batch') }}
+{% endif %}
+
+{% if config is defined and config.account is defined %}
+#SBATCH --account={{ config.account }}
+{% elif account is defined %}
+#SBATCH --account={{ account }}
+{% endif %}
+
+{% if config is defined and config.qos is defined %}
+#SBATCH --qos={{ config.qos }}
+{% endif %}
+
+{% if config is defined and config.time is defined %}
+#SBATCH --time={{ config.time }}
+{% else %}
+#SBATCH --time={{ time_limit | default('24:00:00') }}
+{% endif %}
+
+{% if config is defined and config.constraint is defined %}
+#SBATCH --constraint={{ config.constraint }}
+{% endif %}
+
+{% if config is defined and config.mail_type is defined %}
+#SBATCH --mail-type={{ config.mail_type }}
+#SBATCH --mail-user={{ config.mail_user }}
+{% endif %}
+
+# ==============================================================================
+# Environment setup
+# ==============================================================================
+echo "=============================================================="
+echo "Job ID       : $SLURM_JOB_ID"
+echo "Job Name     : $SLURM_JOB_NAME"
+echo "Nodes        : $SLURM_JOB_NODELIST"
+echo "Ntasks       : $SLURM_NTASKS"
+echo "CPUs/task    : $SLURM_CPUS_PER_TASK"
+echo "Start time   : $(date)"
+echo "Working dir  : $(pwd)"
+echo "Label        : {{ label }}"
+echo "=============================================================="
+
+# --- Module system ---
+{% if config is defined and config.modules is defined %}
+{% for mod in config.modules %}
+module load {{ mod }}
+{% endfor %}
+{% elif modules is defined %}
+{% for mod in modules %}
+module load {{ mod }}
+{% endfor %}
+{% else %}
+# Load default modules
+# module load python/3.10
+# module load openmpi
+{% endif %}
+
+# --- Conda / virtualenv ---
+{% if config is defined and config.conda_env is defined %}
+source activate {{ config.conda_env }}
+{% elif config is defined and config.venv is defined %}
+source {{ config.venv }}/bin/activate
+{% elif conda_env is defined %}
+source activate {{ conda_env }}
+{% elif venv is defined %}
+source {{ venv }}/bin/activate
+{% else %}
+# Add your environment activation here
+# conda activate myenv
+# source /path/to/venv/bin/activate
+{% endif %}
+
+# --- Environment variables ---
+{% if config is defined and config.env_vars is defined %}
+{% for key, value in config.env_vars.items() %}
+export {{ key }}="{{ value }}"
+{% endfor %}
+{% endif %}
+
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
+export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
+export OPENBLAS_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
+
+# --- Working directory ---
+{% if config is defined and config.work_dir is defined %}
+WORK_DIR="{{ config.work_dir }}"
+{% else %}
+WORK_DIR="${SLURM_SUBMIT_DIR}"
+{% endif %}
+
+cd "${WORK_DIR}" || { echo "Cannot cd to ${WORK_DIR}"; exit 1; }
+echo "Working directory: $(pwd)"
+
+# --- Scratch directory (for I/O-heavy calculations) ---
+{% if config is defined and config.use_scratch is defined and config.use_scratch %}
+SCRATCH_DIR="/scratch/${USER}/${SLURM_JOB_ID}"
+mkdir -p "${SCRATCH_DIR}"
+echo "Scratch directory: ${SCRATCH_DIR}"
+
+# Copy input files to scratch
+{% if config is defined and config.input_files is defined %}
+{% for f in config.input_files %}
+cp -v "{{ f }}" "${SCRATCH_DIR}/"
+{% endfor %}
+{% endif %}
+cd "${SCRATCH_DIR}"
+{% endif %}
+
+# ==============================================================================
+# MPI / process configuration
+# ==============================================================================
+{% if config is defined and config.mpi is defined and config.mpi %}
+# MPI configuration
+export MPI_CMD="{% if config.mpi_runner is defined %}{{ config.mpi_runner }}{% else %}mpirun{% endif %} -np ${SLURM_NTASKS}"
+{% if config is defined and config.mpi_flags is defined %}
+{% for flag in config.mpi_flags %}
+export MPI_CMD="${MPI_CMD} {{ flag }}"
+{% endfor %}
+{% endif %}
+echo "MPI command: ${MPI_CMD}"
+{% endif %}
+
+# ==============================================================================
+# Run the calculation
+# ==============================================================================
+echo ""
+echo ">>> Starting calculation ..."
+echo ""
+
+START_TIME=$(date +%s)
+
+{% if config is defined and config.pre_commands is defined %}
+# --- Pre-calculation commands ---
+{% for cmd in config.pre_commands %}
+{{ cmd }}
+{% endfor %}
+{% endif %}
+
+# --- Main calculation ---
+{% if config is defined and config.calculation_type is defined %}
+{% if config.calculation_type == 'uhf' %}
+python pyscf_uhf.py
+{% elif config.calculation_type == 'ccsd' %}
+python pyscf_ccsd.py
+{% elif config.calculation_type == 'casscf' %}
+python pyscf_casscf.py
+{% elif config.calculation_type == 'dmrg' %}
+python block2_dmrg.py
+{% elif config.calculation_type == 'hast_ucc' %}
+python hast_ucc.py
+{% elif config.calculation_type == 'pipeline' %}
+# Multi-step pipeline
+{% if config is defined and config.pipeline_steps is defined %}
+{% for step in config.pipeline_steps %}
+echo ">>> Pipeline step: {{ step.name | default(loop.index) }}"
+{{ step.command }}
+{% if step.check is defined and step.check %}
+# Check previous step succeeded
+if [ $? -ne 0 ]; then
+    echo "ERROR: Pipeline step '{{ step.name }}' failed!"
+    exit 1
+fi
+{% endif %}
+{% endfor %}
+{% endif %}
+{% elif config.calculation_type == 'custom' %}
+# Custom calculation command
+{% if config is defined and config.custom_command is defined %}
+{{ config.custom_command }}
+{% else %}
+echo "ERROR: custom_command not defined in config"
+exit 1
+{% endif %}
+{% endif %}
+{% else %}
+# Default: run the script specified by the caller
+{% if config is defined and config.script is defined %}
+{% if config is defined and config.mpi is defined and config.mpi %}
+${MPI_CMD} python "{{ config.script }}"
+{% else %}
+python "{{ config.script }}"
+{% endif %}
+{% elif script is defined %}
+python "{{ script }}"
+{% else %}
+echo "ERROR: No calculation type or script specified."
+echo "Set config.calculation_type or config.script in the context dict."
+exit 1
+{% endif %}
+{% endif %}
+
+EXIT_CODE=$?
+
+# --- Post-calculation commands ---
+{% if config is defined and config.post_commands is defined %}
+{% for cmd in config.post_commands %}
+{{ cmd }}
+{% endfor %}
+{% endif %}
+
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+
+# ==============================================================================
+# Cleanup and result transfer
+# ==============================================================================
+{% if config is defined and config.use_scratch is defined and config.use_scratch %}
+# Copy results back from scratch
+echo ""
+echo ">>> Copying results from scratch ..."
+{% if config is defined and config.result_patterns is defined %}
+{% for pattern in config.result_patterns %}
+cp -v ${SCRATCH_DIR}/{{ pattern }} "${SLURM_SUBMIT_DIR}/"
+{% endfor %}
+{% else %}
+cp -v ${SCRATCH_DIR}/*.npz "${SLURM_SUBMIT_DIR}/" 2>/dev/null
+cp -v ${SCRATCH_DIR}/*.out "${SLURM_SUBMIT_DIR}/" 2>/dev/null
+cp -v ${SCRATCH_DIR}/*.npy "${SLURM_SUBMIT_DIR}/" 2>/dev/null
+{% endif %}
+
+# Clean up scratch
+rm -rf "${SCRATCH_DIR}"
+{% endif %}
+
+# ==============================================================================
+# Summary
+# ==============================================================================
+echo ""
+echo "=============================================================="
+echo "Job finished at : $(date)"
+echo "Wall time       : ${ELAPSED} seconds ($((ELAPSED / 3600))h $((ELAPSED % 3600 / 60))m $((ELAPSED % 60))s)"
+echo "Exit code       : ${EXIT_CODE}"
+echo "Label           : {{ label }}"
+{% if config is defined and config.calculation_type is defined %}
+echo "Calculation type: {{ config.calculation_type }}"
+{% endif %}
+echo "=============================================================="
+
+exit ${EXIT_CODE}

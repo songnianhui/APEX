@@ -1,0 +1,118 @@
+{
+  "_file_role": "Chan 2026 LLDUC benchmark reference for FeMoco.",
+  "_comment": "This file stores directly extractable benchmark numbers from the 2026 FeMoco paper for the LLDUC (76o,113e) model, including the summary consensus energies and the table-grade UHF/UCCSD/UCCSDT/UDMRG values for selected low-energy spin isomers.",
+  "source": {
+    "paper": "2026-Classical solution of the FeMo-cofactor model to chemical accuracy and its implications",
+    "tables": [
+      "Supplementary Table 9",
+      "Supplementary Table 10"
+    ],
+    "summary_sections": [
+      "main text Section 4.6",
+      "supplementary sections around Tables 9-10 and post-Q discussion"
+    ],
+    "model": "LLDUC",
+    "active_space": "(76o,113e)",
+    "energy_shift_reference_hartree": -22140.0
+  },
+  "summary_consensus_energies": {
+    "dmrg_bs8_237_extrapolated_hartree": -22140.4101,
+    "ucc_tight_upper_bound_hartree": -22140.4071,
+    "ucc_post_q_estimates": [
+      {
+        "state": "BS7-C",
+        "energy_hartree": -22140.410812
+      },
+      {
+        "state": "BS8-E",
+        "energy_hartree": -22140.411097
+      },
+      {
+        "state": "BS8-F",
+        "energy_hartree": -22140.409875
+      }
+    ],
+    "combined_consensus_energy_hartree": -22140.4106,
+    "combined_consensus_uncertainty_hartree": 0.0005,
+    "conservative_ground_state_energy_hartree": -22140.4091,
+    "conservative_uncertainty_hartree": 0.002,
+    "bs7_c_final_estimate_hartree": -22140.4089,
+    "bs7_c_final_uncertainty_hartree": 0.0021
+  },
+  "table9_selected_states": [
+    {
+      "state": "BS7-C",
+      "e_uhf_shifted_hartree": 0.009608,
+      "s2_uhf": 17.88,
+      "e_uhf_total_hartree": -22139.990392,
+      "e_uccsd_shifted_hartree": -0.305389,
+      "s2_uccsd": 11.92,
+      "e_uccsd_total_hartree": -22140.305389,
+      "e_uccsdt_shifted_hartree": -0.394946,
+      "s2_uccsdt": 9.31,
+      "e_uccsdt_total_hartree": -22140.394946
+    },
+    {
+      "state": "BS8-E",
+      "e_uhf_shifted_hartree": 0.016226,
+      "s2_uhf": 17.9,
+      "e_uhf_total_hartree": -22139.983774,
+      "e_uccsd_shifted_hartree": -0.306453,
+      "s2_uccsd": 12.62,
+      "e_uccsd_total_hartree": -22140.306453,
+      "e_uccsdt_shifted_hartree": -0.395255,
+      "s2_uccsdt": 8.22,
+      "e_uccsdt_total_hartree": -22140.395255
+    },
+    {
+      "state": "BS8-F",
+      "e_uhf_shifted_hartree": 0.01672,
+      "s2_uhf": 17.96,
+      "e_uhf_total_hartree": -22139.98328,
+      "e_uccsd_shifted_hartree": -0.298387,
+      "s2_uccsd": 12.56,
+      "e_uccsd_total_hartree": -22140.298387,
+      "e_uccsdt_shifted_hartree": -0.392966,
+      "s2_uccsdt": 10.43,
+      "e_uccsdt_total_hartree": -22140.392966
+    }
+  ],
+  "table10_bs8e_udmrg": [
+    {
+      "bond_dimension": 5000,
+      "e_udmrg_shifted_hartree": -0.382131,
+      "e_udmrg_total_hartree": -22140.382131,
+      "s2_udmrg": 12.27
+    },
+    {
+      "bond_dimension": 6000,
+      "e_udmrg_shifted_hartree": -0.384697,
+      "e_udmrg_total_hartree": -22140.384697,
+      "s2_udmrg": 12.02
+    },
+    {
+      "bond_dimension": 7000,
+      "e_udmrg_shifted_hartree": -0.38672,
+      "e_udmrg_total_hartree": -22140.38672,
+      "s2_udmrg": 11.8
+    },
+    {
+      "bond_dimension": 8000,
+      "e_udmrg_shifted_hartree": -0.388369,
+      "e_udmrg_total_hartree": -22140.388369,
+      "s2_udmrg": 11.6
+    },
+    {
+      "bond_dimension": 9000,
+      "e_udmrg_shifted_hartree": -0.389741,
+      "e_udmrg_total_hartree": -22140.389741,
+      "s2_udmrg": 11.42
+    },
+    {
+      "bond_dimension": 11000,
+      "e_udmrg_shifted_hartree": -0.391926,
+      "e_udmrg_total_hartree": -22140.391926,
+      "s2_udmrg": 11.2
+    }
+  ]
+}
