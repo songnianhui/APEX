@@ -15,7 +15,7 @@
 - 保持 Hamiltonian 语义一致：`UHF / UCC / HAST-UCC / DMRG` 均在 `FCIDUMP` 定义的同一 active space 模型上操作。
 - 保持筛选工作流可由人工操控：每个主要步骤都会生成机器可读的摘要和电子表格友好的选择文件，以便用户决定哪些构型进入下一阶段。
 
-为了与文献基准工作流对齐，`APEX_Filter` 现在还区分了：
+为了让工作流分层更清楚，`APEX_Filter` 现在还区分了：
 
 - `symmetry_group`：来自 `APEX_CAS` 元数据的全簇点群标签
 - `metal_framework_symmetry`：仅金属骨架的对称性提示
@@ -31,18 +31,18 @@
 
 从 `step2 enumerate` 开始，数值和选择控制参数存放在会话本地的 `filter_session/method_controls.yaml` 中。
 
-对维护中的主线来说，`step3-6` 的 observables 只记录计算结果。benchmark
-compare 仍然可以作为独立验证工具使用，但不会再自动注入 production session
+对维护中的主线来说，`step3-6` 的 observables 只记录计算结果。验证侧 compare
+仍然可以作为独立工具使用，但不会再自动注入 production session
 产物。
 
 对已经闭合的 V1.0.0 主流程来说，维护中的 mainline 到：
 
 `report`
 
-当前 Fe2S2 重跑 walkthrough 位于：
+当前 Fe2S2 主线 walkthrough 位于：
 
 - [../docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [../examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [../examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ---
 
@@ -93,12 +93,12 @@ export PYTHONPATH=/Users/snh/hast-ucc:$PYTHONPATH
 `APEX_Filter` 现在使用固定的层次词汇表来报告枚举结果，避免不同系统之间使用重载的 `config` 计数进行不恰当的比较：
 
 - `raw spin patterns`：位点标记的共线破对称符号模式
-- `spin families`：按对称性或基准分组的族
+- `spin families`：按对称性或工作流规则分组的族
 - `spin x oxidation guesses`：唯一的 `(spin pattern, oxidation assignment)` 配对
 - `spin x oxidation x d guesses`：唯一的全展开电子构型猜测
 - `total configs (saved)`：可选构型裁剪后保留的数量
 
-与基准对齐的参考计数：
+当前工作流词汇表使用的参考计数：
 
 | 系统 | 原始自旋模式 | 自旋族 | 自旋 x 氧化态 | 自旋 x 氧化态 x d | 总构型数（已保存） |
 |---|---:|---:|---:|---:|---:|
@@ -162,7 +162,7 @@ fcidump_path: outputs/fcidump/FCIDUMP.*
 
 路径相对于 `apex_cas_case_dir` 解析。`FCIDUMP.*` 会解析为实际的 FCIDUMP 文件，同时排除 `.ecore` 伴随文件。
 
-对于由 CAS YAML 驱动的基准对齐运行，还应保留：
+对于由 CAS YAML 驱动的运行，还应保留：
 
 ```yaml
 benchmark_profile: ""
@@ -187,11 +187,11 @@ apex-filter load \
 
 `filter_session/method_controls.yaml` 也会自动创建。该文件是后续方法参数（`enumerate`、`uhf`、`ccsd`、`ccsd_t`、`ccsdt`、`dmrg_basis`、`dmrg`、`fno_uccsdtq`）的会话本地控制界面。
 
-如需从当前 fresh case 布局出发、逐步完成每个维护步骤的
-`Fe2S2(SCH3)4^{2-}` 重跑指南，请参阅：
+如需从当前维护中的案例目录出发、逐步完成每个维护步骤的
+`Fe2S2(SCH3)4^{2-}` 主线指南，请参阅：
 
 - [../docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [../examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [../examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ### 步骤 3：运行筛选链
 
@@ -207,7 +207,7 @@ apex-filter extrapolate --session examples/fe4s4h4/filter_session
 apex-filter report    --session examples/fe4s4h4/filter_session
 ```
 
-仓库中保留但不属于当前主 benchmark 路径的高阶分支：
+仓库中保留但不属于当前主线路径的高阶分支：
 
 ```bash
 apex-filter fno-uccsdtq --session examples/fe4s4h4/filter_session --pick "top 2" --freeze-occ 2,4
@@ -412,7 +412,7 @@ filter_session/
 尚未成为完整维护工作流的内容：
 
 - `step11+` 高阶分支不属于本轮闭合的 V1.0.0 rerun / cleanup 范围
-- `fno-uccsdtq -> cc-composite` 不属于当前维护中的 benchmark 主路径
+- `fno-uccsdtq -> cc-composite` 不属于当前维护中的生产主路径
 - 大 active space（`117o/180o/285o/404o`）流水线
 - QM/MM 平均势能工作流
 - 集成到主会话 CLI 中的布居分析

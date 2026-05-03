@@ -1,14 +1,14 @@
 [English](example.md) | 中文
 
-# Fe2S2 氧化态完整复现指南
+# Fe2S2 氧化态主线指南
 
-本指南复现已在本仓库中验证通过的氧化态 `Fe2S2(SCH3)4^{2-}` benchmark。
+本指南描述维护中的氧化态 `Fe2S2(SCH3)4^{2-}` 主线工作流。
 
 范围：
 - `APEX_CAS`：`prepare -> scf -> buildcas -> fcidump -> testcas`
 - `APEX_Filter`：`load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> extrapolate -> report`
 
-如果希望避免覆盖已提交的 benchmark 产物，请在一个全新的 clone 或 `examples/fe2s2/` 的副本中运行以下命令。
+使用维护中的 `examples/fe2s2/` 案例目录即可完成主线运行。
 
 ## 0. 所需文件
 
@@ -100,7 +100,7 @@ apex-cas buildcas examples/fe2s2/inputs/fe2s2.xyz \
 - 确保 active orbitals 在化学上是合理的
 - 如有需要，在生成 FCIDUMP 之前编辑 `*_selection.txt`
 
-对于本 benchmark，已提交的 selection 与已验证的运行结果一致。
+如有需要，可在生成 FCIDUMP 之前手动调整已生成的 selection 文件。
 
 ## 4. 生成 FCIDUMP
 
@@ -173,7 +173,7 @@ apex-filter load \
 - 验证 `cluster_info.yaml` 已被正确读取
 - 在执行下游步骤之前检查 `filter_session/method_controls.yaml`
 
-对于本 benchmark，`filter_settings.yaml` 仅是 step-1 的引导文件。从 step 2 开始的数值控制参数存放在 `method_controls.yaml` 中。
+`filter_settings.yaml` 仅是 step-1 的引导文件。从 step 2 开始的数值控制参数存放在 `method_controls.yaml` 中。
 
 ## 7. 枚举电子组态
 
@@ -194,7 +194,7 @@ apex-filter enumerate --session examples/fe2s2/filter_session
 需要确认或编辑：
 
 - 确认氧化态 Fe2S2 族栈正确
-- 在镜像态验证后，保留一个代表态用于主 benchmark ladder
+- 在镜像态验证后，可按需要保留一个代表态用于后续单态路线
 - 在本指南中，代表态标签为 `Fe1↑Fe2↓|2xFe(III)|d:none`
 
 枚举控制参数来自 `examples/fe2s2/filter_session/method_controls.yaml`。如果需要更改枚举的规模，调整其中的 `enumerate` 部分，然后重新运行 `apex-filter enumerate`。
@@ -219,7 +219,7 @@ apex-filter uhf \
 需要确认：
 
 - `converged = true`
-- `E_total` 与 `Fe2S2` 氧化态 benchmark 表一致
+- `E_total` 合理
 - `s2`、`two_s` 以及 Fe 位点自旋观测量合理
 
 ## 9. 运行 UCCSD
@@ -240,7 +240,7 @@ apex-filter ccsd \
 
 需要确认：
 
-- `E_total` 在 Chan Table 5 的 benchmark 容差范围内
+- `E_total` 合理
 - `s2`、`two_s`、`two_sz_fe1`、`two_sz_fe2` 已写入摘要和 sidecar JSON
 
 ## 10. 运行 UCCSD(T)
@@ -261,7 +261,7 @@ apex-filter ccsd-t \
 
 需要确认：
 
-- 能量和自旋观测量仍在与 Chan 相同的 benchmark 范围内
+- 能量和自旋观测量合理
 
 ## 11. 运行 UCCSDT
 
@@ -288,7 +288,7 @@ apex-filter ccsdt \
 
 需要确认：
 
-- `energy` 接近 Chan Table 5 的 `UCCSDT` 值
+- `energy` 合理
 - `observables_complete = true`
 - `lambda_converged = true`
 - `.h5` checkpoint 文件存在，以便在需要时可以重启 observable 阶段
@@ -315,9 +315,9 @@ apex-filter dmrg-basis \
 
 - basis QA 指标健康
 - basis 标签和排序稳定
-- benchmark 运行仅保留代表态
+- 如走单态路线，可在此阶段仅保留代表态
 
-已提交的 `method_controls.yaml` 已包含此阶段经过验证的 Fe2S2 氧化态 benchmark 设置。
+根据当前算例需要检查并调整 `method_controls.yaml` 中此阶段的参数。
 
 ## 13. 运行 DMRG
 
@@ -339,12 +339,12 @@ apex-filter dmrg \
 
 需要确认：
 
-- bond dimension ladder 是经过验证的 Fe2S2 集合
+- bond dimension ladder 是当前设定使用的 Fe2S2 集合
 - `M=100..2400` 的能量平滑下降
 - `M=2000` 和 `M=2400` 已收敛
 - `.h5` 文件包含调度信息、诊断数据和 `2pdm`
 
-对于本 benchmark，DMRG 步骤用作能量 benchmark ladder。此处有意不要求自旋分辨的观测量。
+DMRG 步骤用于构造能量 ladder。此处有意不要求自旋分辨的观测量。
 
 ## 14. 外推至无穷 DMRG Bond Dimension
 
@@ -361,7 +361,7 @@ apex-filter extrapolate --session examples/fe2s2/filter_session
 需要确认：
 
 - 拟合使用了已收敛的 `M=100..2400` ladder
-- 外推值接近 Chan 参考值
+- 外推值稳定且合理
 
 ## 15. 生成最终报告
 
@@ -383,24 +383,13 @@ apex-filter report --session examples/fe2s2/filter_session
 - `final_summary.json` 和 `final_report_energies.csv` 中包含
   `CCSDT + DMRG consensus` 信息
 
-主线 `report` 步骤只负责计算结果汇总；面向 benchmark 的详细 compare 报告属于独
-立验证流程，不属于 production mainline。
+主线 `report` 步骤只负责计算结果汇总，不包含 compare 工作流。
 
 ## 16. 可选：高阶分支
 
-这些步骤不是复现 Fe2S2 氧化态主 benchmark 所必需的，但在 session 中仍然可用：
+这些步骤不属于当前维护中的主线，但在 session 中仍然可用：
 
 - `apex-filter fno-uccsdtq`
 - `apex-filter cc-composite`
 
-对于当前的 benchmark 复现指南，可以在 `report` 之后停止。
-
-## 17. 参考文件
-
-当前保留的验证侧 compare 报告位于：
-
-- [examples/fe2s2/fe2s2_rerun_compare_report_20260503.md](/Users/snh/Projects/APEX/examples/fe2s2/fe2s2_rerun_compare_report_20260503.md)
-
-如果只需要 Chan-facing benchmark 资产，请直接查看：
-
-- `examples/fe2s2/chan_ref/`
+对于当前主线指南，可以在 `report` 之后停止。

@@ -2,7 +2,7 @@
 
 English | [中文](README_CN.md)
 
-`APEX` is a session-based workflow for transition-metal cluster benchmarks.
+`APEX` is a session-based workflow for transition-metal cluster calculations.
 The current V1.0.0 architecture is split into two packages:
 
 - `APEX_CAS`: prepare structure metadata, run SCF, build the active space, and generate `FCIDUMP`
@@ -18,14 +18,13 @@ APEX_Filter:
 load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> extrapolate -> report
 ```
 
-This production mainline is compute-only. Validation-side compare work
-(`APEX_bk`, `fe2s2_bk2`, `chan_ref`, matrix/tensor compare, report generation)
-is intentionally kept separate from the runtime computation path.
+This production mainline is compute-only. Validation-side comparison and
+analysis are intentionally kept separate from the runtime computation path.
 
-For the validated Fe2S2 oxidized benchmark, see:
+For the maintained Fe2S2 walkthrough, see:
 
 - [docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ## Repository Layout
 
@@ -34,33 +33,18 @@ APEX/
 ├── APEX_CAS/          # Active-space construction and FCIDUMP generation
 ├── APEX_Filter/       # Session-based active-space screening
 ├── shared/            # Shared data models, parsers, config templates, templates
-├── examples/          # Reproducible benchmark cases
+├── examples/          # Reproducible example cases
 ├── docs/              # User-facing workflow documentation
 └── plans/             # Recovery and implementation plans
 ```
 
 ## Fe2S2 Case Layout
 
-The repository now keeps two local Fe2S2 directories with different roles:
+The maintained release example is:
 
 - `examples/fe2s2/`
-  - fresh rerun working case
-  - used for current end-to-end validation and new artifacts
-- `examples/fe2s2_bk2/`
-  - retained local baseline snapshot
-  - used when a current artifact needs to be compared against the repository's
-    pre-rerun APEX baseline
-
-Historical benchmark artifacts remain in:
-
-- `APEX_bk/examples/fe2s2/`
-- `examples/fe2s2/chan_ref/`
-
-When rerunning Fe2S2:
-
-- compare to `APEX_bk` when the corresponding historical artifact exists
-- otherwise compare structure/schema against `examples/fe2s2_bk2`
-- use `chan_ref` for the final benchmark-facing comparison report
+  - a complete mainline case directory
+  - used to demonstrate the production workflow from `prepare` through `report`
 
 ## Core Principles
 
@@ -136,15 +120,15 @@ apex-filter report --session examples/fe2s2/filter_session
 - `shared/config/method_controls_template.yaml`
   - template for step-local numerical controls copied into each filter session
 
-## Current Benchmark Direction
+## Current Mainline Scope
 
-The current directly validated benchmark case is oxidized `Fe2S2(SCH3)4^{2-}`.
-The repository is being rebuilt around a clean V1.0.0 workflow with:
+The maintained example case is oxidized `Fe2S2(SCH3)4^{2-}`. The repository is
+organized around a clean V1.0.0 workflow with:
 
 - shared authority in `shared/`
 - no hidden fallback reconstruction of `cluster_info`
 - session-local numerical control through `method_controls.yaml`
-- `step8` benchmark DMRG routed through `pyscf_dmrgci_sz` when requested by the session controls
+- `step8` DMRG routed through `pyscf_dmrgci_sz` when requested by the session controls
 
 The higher-order `step11+` branch remains in the tree, but it is not part of
 the closed V1.0.0 rerun / cleanup / authority-validation scope.

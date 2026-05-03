@@ -13,7 +13,7 @@ This package is designed around two principles:
 - Keep the Hamiltonian semantics consistent: `UHF / UCC / HAST-UCC / DMRG` all operate on the same active-space model defined by `FCIDUMP`.
 - Keep the screening workflow human-steerable: every major step writes machine-readable summaries and spreadsheet-friendly selection files so the user can decide which configurations enter the next stage.
 
-For literature-aligned benchmark workflows, `APEX_Filter` now also distinguishes:
+For literature-aligned workflows, `APEX_Filter` now also distinguishes:
 
 - `symmetry_group`: full-cluster point group label from `APEX_CAS` metadata
 - `metal_framework_symmetry`: metal-skeleton-only symmetry hint
@@ -38,10 +38,10 @@ For the closed V1.0.0 workflow, the maintained mainline stops at:
 
 `report`
 
-The Fe2S2 rerun walkthrough lives in:
+The Fe2S2 walkthrough lives in:
 
 - [../docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [../examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [../examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ---
 
@@ -93,12 +93,12 @@ This means `import pyhast` works directly in new terminal sessions.
 systems are not compared using overloaded `config` counts:
 
 - `raw spin patterns`: site-labeled collinear broken-symmetry sign patterns
-- `spin families`: symmetry- or benchmark-grouped families
+- `spin families`: symmetry- or workflow-grouped families
 - `spin x oxidation guesses`: unique `(spin pattern, oxidation assignment)` pairs
 - `spin x oxidation x d guesses`: unique fully expanded electronic guesses
 - `total configs (saved)`: the number kept after optional config reduction
 
-Benchmark-aligned reference counts:
+Reference counts used by the current workflow vocabulary:
 
 | System | Raw spin patterns | Spin families | Spin x oxidation | Spin x oxidation x d | Total configs (saved) |
 |---|---:|---:|---:|---:|---:|
@@ -173,7 +173,7 @@ fcidump_path: outputs/fcidump/FCIDUMP.*
 Paths are interpreted relative to `apex_cas_case_dir`. `FCIDUMP.*` is resolved
 to the real FCIDUMP file while excluding `.ecore` sidecars.
 
-For benchmark-aligned runs driven by the CAS YAML, also keep:
+For runs driven by the CAS YAML, also keep:
 
 ```yaml
 benchmark_profile: ""
@@ -205,11 +205,11 @@ The intended authority split is:
 - `filter_settings.yaml` controls only `step1 load`
 - `method_controls.yaml` controls numerical behavior from `step2 enumerate` onward
 
-For a complete `Fe2S2(SCH3)4^{2-}` rerun guide that starts from the current
-fresh case layout and walks through every maintained step, see:
+For a complete `Fe2S2(SCH3)4^{2-}` guide that starts from the maintained case
+layout and walks through every maintained step, see:
 
 - [../docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [../examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [../examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ### Step 3: Run the screening chain
 
@@ -348,9 +348,9 @@ These are diagnostics for method quality, not state-selection criteria.
 
 Run active-space DMRG from the saved step-3 state plus the step-7 orbital basis.
 
-Important benchmark note:
+Important runtime note:
 
-- `dmrg.backend: pyscf_dmrgci_sz` is the maintained benchmark route for the Fe2S2 oxidized reference workflow
+- `dmrg.backend: pyscf_dmrgci_sz` is the maintained DMRG route for the Fe2S2 oxidized mainline workflow
 - CLI overrides such as `--bond-dims 2000,2400` are supported for targeted reruns without editing the session file
 
 ### `apex-filter extrapolate`
@@ -461,7 +461,7 @@ What is already on the maintained V1.0.0 path:
 What is not yet a maintained full workflow:
 
 - `step11+` higher-order branch as part of the closed V1.0.0 rerun / cleanup scope
-- `fno-uccsdtq -> cc-composite` as part of the maintained benchmark path
+- `fno-uccsdtq -> cc-composite` as part of the maintained production path
 - large active space (`117o/180o/285o/404o`) pipeline
 - QM/MM average potential workflow
 - population analysis integrated into the main session CLI

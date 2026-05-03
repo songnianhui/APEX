@@ -95,8 +95,8 @@ This consumes the saved CAS state and selection file and writes:
 - `outputs/fcidump/*_fcidump_info.json`
 
 The maintained `fcidump` mainline only generates the Hamiltonian artifacts.
-Reference comparisons are validation-side actions and are no longer invoked by
-the production `apex-cas fcidump` command.
+Validation-side comparisons are separate from the production `apex-cas fcidump`
+command.
 
 ### 5. `testcas`
 
@@ -108,10 +108,10 @@ This is an optional DMRG smoke test on the generated active-space Hamiltonian.
 
 ## Quick Example
 
-For the validated oxidized Fe2S2 benchmark:
+For the maintained Fe2S2 walkthrough:
 
 - [../docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [../examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [../examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ## CLI Summary
 
@@ -192,12 +192,8 @@ For V1.0.0, the intended authority chain is:
 Later stages are expected to consume saved state, not silently reconstruct new
 cluster metadata.
 
-## Fe2S2 Rerun Note
+## Fe2S2 Note
 
-For the current repository layout:
-
-- `examples/fe2s2/` is the fresh rerun working case
-- `examples/fe2s2_bk2/` is the retained local baseline snapshot
-
-The canonical Fe2S2 walkthrough now assumes that downstream filter bootstrap
-files may be regenerated during the rerun rather than committed in advance.
+The maintained Fe2S2 example is the production mainline case under
+`examples/fe2s2/`. The walkthrough assumes that downstream filter bootstrap
+files may be generated as part of the normal workflow.

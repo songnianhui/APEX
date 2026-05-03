@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-`APEX` 是一个面向过渡金属簇 benchmark 的 session-based 工作流。当前
+`APEX` 是一个面向过渡金属簇计算的 session-based 工作流。当前
 V1.0.0 架构分成两个子项目：
 
 - `APEX_CAS`
@@ -20,14 +20,12 @@ APEX_Filter:
 load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> extrapolate -> report
 ```
 
-这条 production mainline 只负责计算。与 `APEX_bk`、`fe2s2_bk2`、`chan_ref`
-的 compare，以及矩阵/张量 compare 和最终比较报告，都属于独立的验证侧工作流，
-不会在运行主线时自动调用。
+这条 production mainline 只负责计算。验证侧 compare、分析以及矩阵/张量比对都属于独立工作流，不会在运行主线时自动调用。
 
-对于已经验证的 Fe2S2 氧化态 benchmark，请优先参考：
+对于维护中的 Fe2S2 主线示例，请优先参考：
 
 - [docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ## 仓库结构
 
@@ -36,32 +34,18 @@ APEX/
 ├── APEX_CAS/          # 活性空间准备与 FCIDUMP 生成
 ├── APEX_Filter/       # 基于 session 的活性空间筛选
 ├── shared/            # 共享数据模型、结构解析、配置模板、输入模板
-├── examples/          # 可复现实例与 benchmark case
+├── examples/          # 可复现实例
 ├── docs/              # 面向用户的工作流文档
 └── plans/             # 重建与实现计划
 ```
 
 ## Fe2S2 目录分工
 
-仓库中现在保留两套本地 Fe2S2 目录，各自职责不同：
+维护中的正式示例目录为：
 
 - `examples/fe2s2/`
-  - 当前 fresh rerun 工作目录
-  - 用于新的端到端重跑和新产物生成
-- `examples/fe2s2_bk2/`
-  - 本地保留的 baseline 快照
-  - 用于和当前 rerun 结果做 repository 内部基线比较
-
-历史 benchmark 参考仍然位于：
-
-- `APEX_bk/examples/fe2s2/`
-- `examples/fe2s2/chan_ref/`
-
-因此 Fe2S2 重跑时的比较原则是：
-
-- `APEX_bk` 有对应产物时，优先与 `APEX_bk` 比
-- `APEX_bk` 没有时，与 `examples/fe2s2_bk2` 比结构和 schema
-- 最终 benchmark-facing 报告再与 `chan_ref` 比
+  - 完整主线案例目录
+  - 用于演示从 `prepare` 到 `report` 的 production workflow
 
 ## 核心原则
 
@@ -137,18 +121,16 @@ apex-filter report --session examples/fe2s2/filter_session
 - `shared/config/method_controls_template.yaml`
   - 各 step 数值控制模板，session 创建后会复制到本地 `method_controls.yaml`
 
-## 当前 benchmark 方向
+## 当前主线范围
 
-当前已经直接数值验证的主 benchmark 是氧化态
-`Fe2S2(SCH3)4^{2-}`。仓库正在围绕一个干净的 V1.0.0 工作流收口，特点包括：
+当前维护中的示例体系是氧化态 `Fe2S2(SCH3)4^{2-}`。仓库围绕一个干净的V1.0.0工作流组织，特点包括：
 
 - 共享 authority 位于 `shared/`
 - 不再允许隐藏式 `cluster_info` fallback 重建
 - `method_controls.yaml` 负责 session 内后续数值控制
-- `step8` 的 benchmark DMRG 路线可以通过 session controls 指向 `pyscf_dmrgci_sz`
+- `step8` 的 DMRG 路线可以通过 session controls 指向 `pyscf_dmrgci_sz`
 
-`step11+` 的高阶分支代码仍保留在树中，但不属于这轮已经闭合的
-V1.0.0 rerun / cleanup / authority-validation 范围。
+`step11+` 的高阶分支代码仍保留在树中，但不属于这轮已经闭合的V1.0.0 rerun / cleanup / authority-validation 范围。
 
 ## 子项目文档
 
