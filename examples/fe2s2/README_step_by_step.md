@@ -1,14 +1,13 @@
-# Fe2S2 Ox Full Reproduction Guide
+# Fe2S2 Ox Step-By-Step Guide
 
-This guide reproduces the oxidized `Fe2S2(SCH3)4^{2-}` benchmark that is now
-validated in this repository.
+This guide walks through the maintained oxidized `Fe2S2(SCH3)4^{2-}` mainline
+workflow in this repository.
 
 Scope:
 - `APEX_CAS`: `prepare -> scf -> buildcas -> fcidump -> testcas`
 - `APEX_Filter`: `load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> extrapolate -> report`
 
-If you want to avoid overwriting the committed benchmark artifacts, run the
-commands in a fresh clone or in a scratch copy of `examples/fe2s2/`.
+Run the commands inside the maintained `examples/fe2s2/` case directory.
 
 ## 0. Files You Need
 
@@ -104,7 +103,7 @@ What to confirm or edit:
 - make sure the active orbitals are chemically reasonable
 - if needed, edit `*_selection.txt` before generating FCIDUMP
 
-For this benchmark, the committed selection already matches the validated run.
+If needed, replace the auto-generated selection before running `fcidump`.
 
 ## 4. Generate FCIDUMP
 
@@ -177,7 +176,7 @@ What to confirm or edit:
 - verify `cluster_info.yaml` was picked up
 - inspect `filter_session/method_controls.yaml` before downstream steps
 
-For this benchmark, `filter_settings.yaml` is only the step-1 bootstrap file.
+`filter_settings.yaml` is only the step-1 bootstrap file.
 The numerical controls from step 2 onward live in `method_controls.yaml`.
 
 ## 7. Enumerate Electronic Configurations
@@ -199,7 +198,7 @@ What it produces:
 What to confirm or edit:
 
 - confirm the oxidized Fe2S2 family stack is correct
-- after mirror-state verification, keep one representative state for the main benchmark ladder
+- after mirror-state verification, keep one representative state if you want a single-state route
 - for this guide, the representative label is `Fe1↑Fe2↓|2xFe(III)|d:none`
 
 The enumeration controls come from `examples/fe2s2/filter_session/method_controls.yaml`.
@@ -226,7 +225,7 @@ What it produces:
 What to confirm:
 
 - `converged = true`
-- `E_total` matches the `Fe2S2` oxidized benchmark table
+- `E_total` is sensible
 - `s2`, `two_s`, and the Fe-site spin observables are sensible
 
 ## 9. Run UCCSD
@@ -247,7 +246,7 @@ What it produces:
 
 What to confirm:
 
-- `E_total` is within benchmark tolerance of Chan Table 5
+- `E_total` is sensible
 - `s2`, `two_s`, `two_sz_fe1`, `two_sz_fe2` are written to the summary and sidecar JSON
 
 ## 10. Run UCCSD(T)
@@ -268,7 +267,7 @@ What it produces:
 
 What to confirm:
 
-- energy and spin observables remain in the same benchmark band as Chan
+- energy and spin observables remain sensible
 
 ## 11. Run UCCSDT
 
@@ -295,7 +294,7 @@ What it produces:
 
 What to confirm:
 
-- `energy` is close to Chan Table 5 `UCCSDT`
+- `energy` is sensible
 - `observables_complete = true`
 - `lambda_converged = true`
 - the `.h5` checkpoint is present so the observable stage can be restarted if needed
@@ -322,9 +321,9 @@ What to confirm:
 
 - the basis QA metrics are healthy
 - the basis labels and ordering are stable
-- the benchmark run keeps the representative state only
+- for a single-state route, keep the representative state only
 
-The committed `method_controls.yaml` already contains the validated Fe2S2 oxidized benchmark settings for this stage.
+Review `method_controls.yaml` for the settings used in this stage.
 
 ## 13. Run DMRG
 
@@ -346,13 +345,13 @@ What it produces:
 
 What to confirm:
 
-- the bond-dimension ladder is the validated Fe2S2 set
+- the bond-dimension ladder is the intended set
 - the `M=100..2400` energies decrease smoothly
 - `M=2000` and `M=2400` converge
 - the `.h5` files include the schedule, diagnostics, and `2pdm`
 
-For this benchmark, the DMRG step is used as an energy benchmark ladder.
-Spin-resolved observables are intentionally not required here.
+The DMRG step is used as an energy ladder. Spin-resolved observables are
+intentionally not required here.
 
 ## 14. Extrapolate To Infinite DMRG Bond Dimension
 
@@ -369,7 +368,7 @@ What it produces:
 What to confirm:
 
 - the fit uses the converged `M=100..2400` ladder
-- the extrapolated value is close to the Chan reference
+- the extrapolated value is stable and sensible
 
 ## 15. Generate The Final Report
 
@@ -382,30 +381,20 @@ apex-filter report --session examples/fe2s2/filter_session
 What it produces:
 
 - `examples/fe2s2/filter_session/step10_report/final_summary.json`
-- `examples/fe2s2/filter_session/step10_report/final_report.md`
+- `examples/fe2s2/filter_session/step10_report/final_report_energies.csv`
+- `examples/fe2s2/filter_session/step10_report/final_report_observables.csv`
 
 What to confirm:
 
 - the final ranking is present
 - the report includes the `CCSDT + DMRG consensus` line
-- the benchmark tables in `examples/fe2s2/chan_ref/` are consistent with the report
 
 ## 16. Optional Higher-Order Branch
 
-These steps are not required to reproduce the main Fe2S2 oxidized benchmark,
-but they remain available in the session:
+These steps are not required for the maintained mainline, but they remain
+available in the session:
 
 - `apex-filter fno-uccsdtq`
 - `apex-filter cc-composite`
 
-For the current benchmark reproduction guide, you can stop after `report`.
-
-## 17. Reference Files
-
-The main benchmark comparison artifacts are:
-
-- [examples/fe2s2/chan_ref/fe2s2_oxidized_apex_vs_chan2026_tables.md](chan_ref/fe2s2_oxidized_apex_vs_chan2026_tables.md)
-- [examples/fe2s2/chan_ref/fe2s2_oxidized_apex_vs_chan2026_energy_table.csv](chan_ref/fe2s2_oxidized_apex_vs_chan2026_energy_table.csv)
-- [examples/fe2s2/chan_ref/fe2s2_oxidized_apex_vs_chan2026_observables_table.csv](chan_ref/fe2s2_oxidized_apex_vs_chan2026_observables_table.csv)
-
-If you only need the final benchmark numbers, use those tables directly.
+For the current mainline guide, you can stop after `report`.

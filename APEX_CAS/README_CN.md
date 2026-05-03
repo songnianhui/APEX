@@ -91,8 +91,8 @@ apex-cas fcidump --case-dir examples/fe2s2
 - `outputs/fcidump/FCIDUMP.*.ecore`
 - `outputs/fcidump/*_fcidump_info.json`
 
-维护中的 `fcidump` 主线只负责生成哈密顿量产物；与 reference 的比较属于验证侧动
-作，不再由 production `apex-cas fcidump` 命令自动触发。
+维护中的 `fcidump` 主线只负责生成哈密顿量产物；验证侧比较与 production
+`apex-cas fcidump` 命令分离。
 
 ### 5. `testcas`
 
@@ -104,10 +104,10 @@ apex-cas testcas examples/fe2s2/outputs/fcidump/FCIDUMP.C4H12Fe2S6_uks_BP86_tzp-
 
 ## Fe2S2 示例
 
-针对已验证的 Fe2S2 oxidized benchmark，可参考：
+针对维护中的 Fe2S2 主线示例，可参考：
 
 - [docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
-- [examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
+- [examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ## CLI 摘要
 
@@ -192,12 +192,8 @@ V1.0.0 的 authority chain 是：
 
 后续步骤应消费已保存状态，而不是静默重新构造新的 cluster metadata。
 
-## Fe2S2 重跑说明
+## Fe2S2 说明
 
-当前仓库布局中：
-
-- `examples/fe2s2/` 是 fresh rerun 工作目录
-- `examples/fe2s2_bk2/` 是本地保留的 baseline 快照
-
-因此最新的 Fe2S2 walkthrough 默认假设：`APEX_Filter` 的 bootstrap 文件可
-在 rerun 过程中重新生成，而不是必须在仓库里预先提交完整一套。
+维护中的 Fe2S2 示例目录是 `examples/fe2s2/`。当前 walkthrough 默认假设：
+`APEX_Filter` 的 bootstrap 文件会作为正常工作流的一部分生成，而不是要求仓库预
+先提交完整 session。

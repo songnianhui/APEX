@@ -1,29 +1,18 @@
-# Fe2S2 Ox Rerun Guide
+# Fe2S2 Ox Mainline Guide
 
-This guide describes the current Fe2S2 oxidized rerun workflow for `APEX V1.0.0`.
+This guide describes the maintained Fe2S2 oxidized mainline workflow for
+`APEX V1.0.0`.
 
 Scope:
 - `APEX_CAS`: `prepare -> scf -> buildcas -> fcidump -> testcas`
 - `APEX_Filter`: `load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> extrapolate -> report`
 
-Local directory roles:
+Case directory:
 - `examples/fe2s2/`
-  - fresh rerun working case
-- `examples/fe2s2_bk2/`
-  - retained local baseline snapshot
-- `APEX_bk/examples/fe2s2/`
-  - historical APEX benchmark baseline
-- `examples/fe2s2/chan_ref/`
-  - Chan-facing comparison bundle
+  - maintained mainline example case
 
 Use this guide together with:
-- [examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
-- [plans/fe2s2_rerun_compare_guide_20260502.md](/Users/snh/Projects/APEX/plans/fe2s2_rerun_compare_guide_20260502.md)
-
-Comparison policy during the rerun:
-1. if `APEX_bk` has the corresponding artifact, compare to `APEX_bk`
-2. otherwise compare structure/schema against `examples/fe2s2_bk2`
-3. use `chan_ref` for the final benchmark-facing comparison report
+- [examples/fe2s2/README_step_by_step.md](/Users/snh/Projects/APEX/examples/fe2s2/README_step_by_step.md)
 
 ## 0. Required Inputs
 
@@ -32,13 +21,13 @@ Before starting, make sure these files exist:
 - `examples/fe2s2/inputs/fe2s2.xyz`
 - `examples/fe2s2/inputs/fe2s2_cas_settings.yaml`
 
-The following files are typically generated during the rerun:
+The following files are typically generated during the workflow:
 
 - `examples/fe2s2/inputs/fe2s2_cluster_info.yaml`
 - `examples/fe2s2/inputs/fe2s2_filter_settings.yaml`
 - `examples/fe2s2/filter_session/method_controls.yaml`
 
-Do not assume the fresh rerun directory begins with a committed full session.
+Do not assume the case directory begins with a committed full session.
 
 ## 1. Prepare Cluster Metadata
 
@@ -101,7 +90,7 @@ Produces:
 
 Confirm:
 - orbital report and NOON plot are chemically sensible
-- if needed, replace the auto-generated `*_selection.txt` with a validated retained selection before `fcidump`
+- if needed, replace the auto-generated `*_selection.txt` before `fcidump`
 
 ## 4. Generate FCIDUMP
 
@@ -115,7 +104,7 @@ Produces:
 - `outputs/fcidump/*_fcidump_info.json`
 
 Confirm:
-- the active space matches the intended benchmark selection
+- the active space matches the intended selection
 - the `.ecore` sidecar is present
 
 ## 5. Optional APEX_CAS DMRG Smoke Test
@@ -188,8 +177,8 @@ Produces:
 - `step2_enumerate/selection_worklist.csv`
 - `step2_enumerate/selection_guide.md`
 
-For the benchmark ladder, keep the validated representative state after
-mirror-state verification.
+For a single-state ladder, keep the representative state after mirror-state
+verification.
 
 ## 8. Run the Maintained Filter Ladder
 
@@ -219,13 +208,12 @@ Key outputs by step:
 
 Confirm:
 - step summaries are produced
-- selected labels are the intended benchmark route
+- selected labels are the intended route
 - the DMRG ladder is smooth and the extrapolated value is sensible
 - the final report includes the expected consensus/ranking lines in
   `final_summary.json` and `final_report_energies.csv`
 
-The mainline `report` step is compute-only. Detailed benchmark-facing compare
-reports are generated separately and are not part of the production workflow.
+The mainline `report` step is compute-only.
 
 For this V1.0.0 guide, the maintained mainline stops after `report`.
 
@@ -237,16 +225,3 @@ V1.0.0 rerun / cleanup / authority-validation scope:
 - `apex-filter fno-uccsdtq`
 - `apex-filter cc-composite`
 - broader `step11+` higher-order follow-on work
-
-## 10. Final Benchmark Comparison
-
-Use the fresh rerun artifacts together with the compare guide and `chan_ref`
-bundle to produce the final benchmark-facing comparison report.
-
-For the current repository state, the retained validation-side compare report is:
-
-- [examples/fe2s2/fe2s2_rerun_compare_report_20260503.md](/Users/snh/Projects/APEX/examples/fe2s2/fe2s2_rerun_compare_report_20260503.md)
-
-For the detailed per-step comparison checklist, use:
-
-- [plans/fe2s2_rerun_compare_guide_20260502.md](/Users/snh/Projects/APEX/plans/fe2s2_rerun_compare_guide_20260502.md)
