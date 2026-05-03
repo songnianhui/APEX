@@ -164,7 +164,7 @@ apex-filter load \
 - `examples/fe2s2/filter_session/step1_load/cas_meta.json`
 - `examples/fe2s2/filter_session/step1_load/cluster_info.json`
 - `examples/fe2s2/filter_session/step1_load/fcidump_ref.json`
-- `examples/fe2s2/filter_session/step1_load/settings.json`
+- `examples/fe2s2/filter_session/step1_load/settings.json`（扁平的 step-1 bootstrap settings 快照）
 - `examples/fe2s2/filter_session/method_controls.yaml`
 
 需要确认或编辑：
@@ -374,13 +374,17 @@ apex-filter report --session examples/fe2s2/filter_session
 生成的产物：
 
 - `examples/fe2s2/filter_session/step10_report/final_summary.json`
-- `examples/fe2s2/filter_session/step10_report/final_report.md`
+- `examples/fe2s2/filter_session/step10_report/final_report_energies.csv`
+- `examples/fe2s2/filter_session/step10_report/final_report_observables.csv`
 
 需要确认：
 
 - 最终排名存在
-- 报告包含 `CCSDT + DMRG consensus` 行
-- `examples/fe2s2/chan_ref/` 中的 benchmark 表与报告一致
+- `final_summary.json` 和 `final_report_energies.csv` 中包含
+  `CCSDT + DMRG consensus` 信息
+
+主线 `report` 步骤只负责计算结果汇总；面向 benchmark 的详细 compare 报告属于独
+立验证流程，不属于 production mainline。
 
 ## 16. 可选：高阶分支
 
@@ -393,10 +397,10 @@ apex-filter report --session examples/fe2s2/filter_session
 
 ## 17. 参考文件
 
-主要的 benchmark 对比产物如下：
+当前保留的验证侧 compare 报告位于：
 
-- [examples/fe2s2/chan_ref/fe2s2_oxidized_apex_vs_chan2026_tables.md](chan_ref/fe2s2_oxidized_apex_vs_chan2026_tables.md)
-- [examples/fe2s2/chan_ref/fe2s2_oxidized_apex_vs_chan2026_energy_table.csv](chan_ref/fe2s2_oxidized_apex_vs_chan2026_energy_table.csv)
-- [examples/fe2s2/chan_ref/fe2s2_oxidized_apex_vs_chan2026_observables_table.csv](chan_ref/fe2s2_oxidized_apex_vs_chan2026_observables_table.csv)
+- [examples/fe2s2/fe2s2_rerun_compare_report_20260503.md](/Users/snh/Projects/APEX/examples/fe2s2/fe2s2_rerun_compare_report_20260503.md)
 
-如果只需要最终的 benchmark 数值，可以直接使用上述表格。
+如果只需要 Chan-facing benchmark 资产，请直接查看：
+
+- `examples/fe2s2/chan_ref/`

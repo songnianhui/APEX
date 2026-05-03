@@ -17,9 +17,9 @@ import numpy as np
 
 from .energy_extrapolation import cc_composite_energy
 from .fno_truncation import build_fno_subspace_from_uccsd
-from .pick import apply_pick, parse_pick_arg
+from .pick import _apply_pick, _parse_pick_arg
 from .reference_hast_ucc import run_reference_hast_ucc
-from .selection_guidance import attach_display_labels, build_display_label_map, write_selection_artifacts
+from .selection_guidance import _attach_display_labels, _build_display_label_map, _write_selection_artifacts
 from .session import SessionManager
 
 _FNO_DEFAULTS = {
@@ -53,11 +53,11 @@ def step_fno_uccsdtq(
 
     state = sm.load_load_state()
     enum_data = sm.load_enumeration()
-    ccsdt_summary = sm.load_ccsdt_summary()
-    display_label_map = build_display_label_map(ccsdt_summary)
+    ccsdt_summary = sm.load_step_summary("step6_ccsdt", "ccsdt_summary.json")
+    display_label_map = _build_display_label_map(ccsdt_summary)
 
-    pick_spec = parse_pick_arg(pick)
-    selected_labels = apply_pick(pick_spec, ccsdt_summary)
+    pick_spec = _parse_pick_arg(pick)
+    selected_labels = _apply_pick(pick_spec, ccsdt_summary)
     config_map = {cfg.label: cfg for cfg in enum_data["configs"]}
     selected_configs = [config_map[label] for label in selected_labels if label in config_map]
 
@@ -166,9 +166,9 @@ def step_fno_uccsdtq(
             row["ccsdtq_fno_energy"] if row["ccsdtq_fno_energy"] is not None else float("inf"),
         )
     )
-    attach_display_labels(summary, ccsdt_summary)
+    _attach_display_labels(summary, ccsdt_summary)
     sm.save_fno_summary(summary)
-    write_selection_artifacts(
+    _write_selection_artifacts(
         os.path.join(sm.session_dir, "step11_fno_uccsdtq"),
         step_name="Step 11 FNO-UCCSDTQ",
         next_step_name="cc-composite",
@@ -184,7 +184,7 @@ def step_cc_composite(session_dir: str):
     sm = SessionManager(session_dir)
     sm.require_previous("step12_cc_composite", "step11_fno_uccsdtq")
 
-    ccsdt_summary = sm.load_ccsdt_summary()
+    ccsdt_summary = sm.load_step_summary("step6_ccsdt", "ccsdt_summary.json")
     fno_summary = sm.load_fno_summary()
     ccsdt_by_label = {
         row["label"]: row for row in ccsdt_summary if row.get("converged") and row.get("energy") is not None
@@ -224,9 +224,9 @@ def step_cc_composite(session_dir: str):
         )
 
     summary.sort(key=lambda row: row["energy"] if row["energy"] is not None else float("inf"))
-    attach_display_labels(summary, fno_summary)
+    _attach_display_labels(summary, fno_summary)
     sm.save_cc_composite_summary(summary)
-    write_selection_artifacts(
+    _write_selection_artifacts(
         os.path.join(sm.session_dir, "step12_cc_composite"),
         step_name="Step 12 CC composite",
         next_step_name=None,

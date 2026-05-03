@@ -1,5 +1,6 @@
 """CLI and session contract regression tests."""
 
+import json
 import os
 from types import SimpleNamespace
 
@@ -7,10 +8,10 @@ import h5py
 import numpy as np
 import pytest
 
-from apex_filter.CAS_loader import FCIDUMPData
 from apex_filter.main import create_parser
-from apex_filter.models import CAS, ActiveSpaceLevel, ClusterInfo, ComputationSettings
 from apex_filter.session import SessionManager
+from shared.fcidump_io import FCIDUMPData
+from shared.models import CAS, ActiveSpaceLevel, ClusterInfo, ComputationSettings
 
 
 def test_cli_accepts_ccsd_t():
@@ -18,6 +19,28 @@ def test_cli_accepts_ccsd_t():
 
     args = parser.parse_args(["ccsd-t", "--session", "demo"])
     assert args.command == "ccsd-t"
+
+
+def test_load_state_ignores_unknown_extra_settings(tmp_path, monkeypatch):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+
+    step1 = os.path.join(sm.session_dir, "step1_load")
+    with open(os.path.join(step1, "cluster_info.json"), "w", encoding="utf-8") as f:
+        json.dump({"metals": [], "bridging_atoms": [], "terminal_ligands": [], "all_elements": [], "all_positions": None, "formula": "", "total_charge": 0, "target_spin": 0.0, "symmetry_group": "C1", "metal_framework_symmetry": "C1", "reduction_symmetry": "C1", "symmetry_axis_atoms": [], "symmetry_source": "auto", "symmetry_confidence": 0.0, "symmetry_candidates": [], "family_scheme": "", "benchmark_profile": "", "config_reduction_mode": "none", "cluster_info_path": "", "annotation_source": "auto"}, f)
+    with open(os.path.join(step1, "cas_meta.json"), "w", encoding="utf-8") as f:
+        json.dump({"n_electrons": 2, "n_orbitals": 2}, f)
+    np.savez(os.path.join(step1, "cas_arrays.npz"))
+    with open(os.path.join(step1, "fcidump_ref.json"), "w", encoding="utf-8") as f:
+        json.dump({"fcidump_path": str(tmp_path / "FCIDUMP.test")}, f)
+    with open(os.path.join(step1, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump({"basis_set_default": "def2-TZVP", "scf_method": "uks", "scf_spin": 5.0}, f)
+
+    monkeypatch.setattr("apex_filter.session._load_fcidump", lambda path: "fcidump")
+
+    state = sm.load_load_state()
+    assert state["settings"].basis_set_default == "def2-TZVP"
+    assert state["settings"].scf_spin == 5.0
 
 
 def test_cli_accepts_ccsdt():
@@ -93,6 +116,10 @@ def test_cli_accepts_dmrg_basis_controls():
             "1e-4",
             "--pm-max-cycle",
             "250",
+            "--pm-exponent",
+            "4",
+            "--pm-init-guess",
+            "cholesky",
             "--boys-conv-tol",
             "1e-7",
             "--boys-conv-tol-grad",
@@ -122,6 +149,8 @@ def test_cli_accepts_dmrg_basis_controls():
     assert args.pm_conv_tol == 1e-8
     assert args.pm_conv_tol_grad == 1e-4
     assert args.pm_max_cycle == 250
+    assert args.pm_exponent == 4
+    assert args.pm_init_guess == "cholesky"
     assert args.boys_conv_tol == 1e-7
     assert args.boys_conv_tol_grad == 1e-5
     assert args.boys_max_cycle == 150
@@ -275,7 +304,7 @@ def test_session_create_includes_step6_ccsdt(tmp_path):
     sm.create()
 
     assert os.path.isdir(os.path.join(sm.session_dir, "step6_ccsdt"))
-    assert os.path.isdir(sm.ccsdt_scripts_dir)
+    assert os.path.isdir(sm.step_artifact_dir("step6_ccsdt", "scripts"))
 
 
 def test_session_create_writes_method_controls_yaml(tmp_path):
@@ -287,6 +316,54 @@ def test_session_create_writes_method_controls_yaml(tmp_path):
     assert "uhf:" in text
     assert "ccsdt:" in text
     assert "dmrg:" in text
+    assert "Chan 2026 Fe2S2 oxidized benchmark coverage" in text
+
+
+def test_step1_settings_json_remains_flat_bootstrap_snapshot(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+
+    cluster_info = ClusterInfo(
+        all_elements=["H"],
+        all_positions=np.array([[0.0, 0.0, 0.0]]),
+        total_charge=-2,
+        target_spin=2.0,
+    )
+    cas = CAS(
+        n_electrons=2,
+        n_orbitals=2,
+        level=ActiveSpaceLevel.MINIMAL,
+        active_indices=[0, 1],
+        orbital_labels=["Fe1_dxy", "Fe2_dxy"],
+    )
+    settings = ComputationSettings(
+        basis_set_default="def2-TZVP",
+        scf_method="uks",
+        xc_functional="BP86",
+        solvation_model="none",
+        conv_tol=1e-10,
+    )
+
+    sm.save_load_state(
+        cluster_info,
+        cas,
+        str(tmp_path / "FCIDUMP.test"),
+        settings,
+        str(tmp_path / "filter_settings.yaml"),
+        apex_cas_provenance={"cluster_info_path": "/tmp/cluster_info.yaml"},
+    )
+
+    with open(os.path.join(sm.session_dir, "step1_load", "settings.json"), encoding="utf-8") as f:
+        payload = json.load(f)
+
+    assert payload["basis_set_default"] == "def2-TZVP"
+    assert payload["scf_method"] == "uks"
+    assert payload["xc_functional"] == "BP86"
+    assert payload["conv_tol"] == 1e-10
+    assert payload["apex_cas_provenance"]["cluster_info_path"] == "/tmp/cluster_info.yaml"
+    assert "requested_config" not in payload
+    assert "effective_method" not in payload
+    assert "effective_parameters" not in payload
 
 
 def test_session_method_controls_override_defaults(tmp_path):
@@ -308,12 +385,164 @@ def test_session_method_controls_override_defaults(tmp_path):
     assert resolved["residual_tol"] == 1.0e-5
 
 
+def test_session_method_controls_ignore_none_cli_values(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+    with open(sm.method_controls_path, "w") as f:
+        f.write(
+            "dmrg:\n"
+            "  bond_dims: [400, 800]\n"
+            "  schedule_mode: benchmark\n"
+        )
+
+    resolved = sm.resolve_method_controls(
+        "dmrg",
+        {"bond_dims": [100, 200], "schedule_mode": "workflow"},
+        {"bond_dims": None, "schedule_mode": None},
+    )
+    assert resolved["bond_dims"] == [400, 800]
+    assert resolved["schedule_mode"] == "benchmark"
+
+
+def test_session_method_controls_ignore_none_optional_dmrg_cli_values(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+    with open(sm.method_controls_path, "w") as f:
+        f.write(
+            "dmrg:\n"
+            "  twosite_to_onesite: 24\n"
+            "  dav_max_iter: 5000\n"
+            "  dav_def_max_size: 64\n"
+            "  dav_rel_conv_thrd: 1.0e-3\n"
+            "  dav_type: NoPrecond\n"
+        )
+
+    resolved = sm.resolve_method_controls(
+        "dmrg",
+        {
+            "twosite_to_onesite": None,
+            "dav_max_iter": None,
+            "dav_def_max_size": None,
+            "dav_rel_conv_thrd": None,
+            "dav_type": None,
+        },
+        {
+            "twosite_to_onesite": None,
+            "dav_max_iter": None,
+            "dav_def_max_size": None,
+            "dav_rel_conv_thrd": None,
+            "dav_type": None,
+        },
+    )
+    assert resolved["twosite_to_onesite"] == 24
+    assert resolved["dav_max_iter"] == 5000
+    assert resolved["dav_def_max_size"] == 64
+    assert resolved["dav_rel_conv_thrd"] == 1.0e-3
+    assert resolved["dav_type"] == "NoPrecond"
+
+
+def test_session_method_controls_cli_override_beats_session_yaml(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+    with open(sm.method_controls_path, "w") as f:
+        f.write(
+            "dmrg_basis:\n"
+            "  localization_method: boys\n"
+            "  ga_seed: 17\n"
+        )
+
+    resolved = sm.resolve_method_controls(
+        "dmrg_basis",
+        {"localization_method": "pm", "ga_seed": 17},
+        {"localization_method": "pm_lowdin", "ga_seed": 23},
+    )
+    assert resolved["localization_method"] == "pm_lowdin"
+    assert resolved["ga_seed"] == 23
+
+
+def test_session_method_controls_cli_override_beats_session_yaml_for_optional_dmrg_controls(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+    with open(sm.method_controls_path, "w") as f:
+        f.write(
+            "dmrg:\n"
+            "  twosite_to_onesite: 24\n"
+            "  dav_max_iter: 5000\n"
+        )
+
+    resolved = sm.resolve_method_controls(
+        "dmrg",
+        {
+            "twosite_to_onesite": None,
+            "dav_max_iter": None,
+        },
+        {
+            "twosite_to_onesite": 18,
+            "dav_max_iter": 4000,
+        },
+    )
+    assert resolved["twosite_to_onesite"] == 18
+    assert resolved["dav_max_iter"] == 4000
+
+
+def test_session_method_controls_default_cli_does_not_override_session_yaml(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+    with open(sm.method_controls_path, "w") as f:
+        f.write(
+            "uhf:\n"
+            "  max_cycle: 777\n"
+            "  conv_tol: 1.0e-10\n"
+        )
+
+    defaults = {"max_cycle": 2000, "conv_tol": 1.0e-8}
+    resolved = sm.resolve_method_controls("uhf", defaults, dict(defaults))
+    assert resolved["max_cycle"] == 777
+    assert resolved["conv_tol"] == 1.0e-10
+
+
+def test_session_build_step_settings_payload_uses_control_source_and_theory(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+
+    payload = sm._build_step_settings_payload(
+        {"basis_set_default": "tzp-dkh", "scf_method": "uks"},
+        theory="UHF",
+        conv_tol=1.0e-10,
+    )
+
+    assert payload["basis_set_default"] == "tzp-dkh"
+    assert payload["scf_method"] == "uks"
+    assert payload["control_source"] == sm.method_controls_path
+    assert payload["theory"] == "UHF"
+    assert payload["conv_tol"] == 1.0e-10
+
+
+def test_session_build_step_settings_payload_accepts_empty_source_settings(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+
+    payload = sm._build_step_settings_payload(
+        None,
+        theory="DMRG",
+        bond_dim=1000,
+        n_sweeps=8,
+    )
+
+    assert payload == {
+        "control_source": sm.method_controls_path,
+        "theory": "DMRG",
+        "bond_dim": 1000,
+        "n_sweeps": 8,
+    }
+
+
 def test_session_create_includes_step7_dmrg_basis(tmp_path):
     sm = SessionManager(str(tmp_path / "session"))
     sm.create()
 
     assert os.path.isdir(os.path.join(sm.session_dir, "step7_dmrg_basis"))
-    assert os.path.isdir(sm.dmrg_basis_results_dir)
+    assert os.path.isdir(sm.step_artifact_dir("step7_dmrg_basis", "results"))
 
 
 def test_session_create_includes_step8_dmrg_and_step9_extrapolate(tmp_path):
@@ -322,7 +551,7 @@ def test_session_create_includes_step8_dmrg_and_step9_extrapolate(tmp_path):
 
     assert os.path.isdir(os.path.join(sm.session_dir, "step8_dmrg"))
     assert os.path.isdir(os.path.join(sm.session_dir, "step9_extrapolate"))
-    assert os.path.isdir(sm.dmrg_results_dir)
+    assert os.path.isdir(sm.step_artifact_dir("step8_dmrg", "results"))
 
 
 def test_session_create_includes_step10_report(tmp_path):
@@ -391,7 +620,16 @@ def test_save_uhf_result_includes_mo_energy_and_density(tmp_path):
         ),
     }
 
-    sm.save_uhf_result("BS7|235", result, state=fake_state)
+    sm.save_uhf_result(
+        "BS7|235",
+        result,
+        state=fake_state,
+        settings_payload={
+            "control_source": "/tmp/method_controls.yaml",
+            "theory": "UHF",
+            "conv_tol": 1e-8,
+        },
+    )
 
     npz_path = os.path.join(sm.session_dir, "step3_uhf", "results", "BS7_235_uhf.npz")
     data = np.load(npz_path)
@@ -415,6 +653,14 @@ def test_save_uhf_result_includes_mo_energy_and_density(tmp_path):
         assert f["metadata"].attrs["label"] == "BS7|235"
         assert f["metadata"].attrs["family"] == ""
         assert "settings_json" in f["metadata"].attrs
+        settings = json.loads(f["metadata"].attrs["settings_json"])
+        assert settings["control_source"] == "/tmp/method_controls.yaml"
+        assert settings["theory"] == "UHF"
+        assert settings["effective_method"]["theory"] == "UHF"
+        for key in ("scf_method", "xc_functional", "relativistic", "solvation_model"):
+            assert key not in settings["effective_parameters"]
+        assert settings["effective_parameters"]["conv_tol"] == 1e-8
+        assert settings["requested_config"]["conv_tol"] == 1e-8
         assert f["molecule"].attrs["basis_set_default"] == "def2-TZVP"
         assert "serialized_xyz" in f["molecule"].attrs
         assert "serialized_solver_mol" in f["molecule"].attrs

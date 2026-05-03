@@ -2,24 +2,30 @@
 
 This module extends the ``reference_uhf`` active-space route so that UCCSD and
 UCCSD(T) operate on the same FCIDUMP Hamiltonian and the same reference orbitals
-saved from step 3. This matches the Chan-2026 modeling level more closely than
-the legacy full-molecule geometry+basis compatibility path.
+saved from step 3. This keeps the correlated active-space workflow aligned with
+the Chan-2026 modeling level instead of reverting to a separate full-molecule
+correlated path. ``run_reference_ucc(...)`` remains the intentional public
+surface here; reference-state reconstruction is now delegated to the shared
+``reference_states`` authority.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass as _dataclass
 import json
 
 import numpy as np
+from pyscf import cc
 
-from .hdf5_state_io import load_uhf_state_h5
-from .post_scf_observables import analyze_active_space_spin_observables
-from .reference_uhf import build_fake_mol, build_reference_uhf_solver
+from .post_scf_observables import analyze_active_space_spin_observables as _analyze_active_space_spin_observables
+from shared.reference_states import (
+    load_reference_mf_from_npz as _load_reference_mf_from_npz,
+    load_reference_state_payload as _load_reference_state_payload,
+)
 
 
-@dataclass
-class ReferenceUCCResult:
+@_dataclass
+class _ReferenceUCCResult:
     """Result of an active-space UCCSD or UCCSD(T) calculation."""
 
     method: str
@@ -41,35 +47,6 @@ class ReferenceUCCResult:
     two_sz_fe2: float | None = None
     post_scf_observables: dict | None = None
 
-
-def _load_reference_state_payload(uhf_npz_path: str) -> dict:
-    if uhf_npz_path.endswith(".h5"):
-        return load_uhf_state_h5(uhf_npz_path)
-    npz = np.load(uhf_npz_path, allow_pickle=True)
-    return {key: npz[key] for key in npz.files}
-
-
-def load_reference_mf_from_npz(fcidump_data, uhf_npz_path: str):
-    """Rebuild a UHF object on the FCIDUMP Hamiltonian from saved step3 data."""
-    data = _load_reference_state_payload(uhf_npz_path)
-
-    mo_occ = (data["mo_occ_a"], data["mo_occ_b"])
-    ms2 = int(round(float(np.sum(mo_occ[0]) - np.sum(mo_occ[1]))))
-    mol = build_fake_mol(
-        fcidump_data.norb,
-        fcidump_data.nelec,
-        ms2,
-        ecore=fcidump_data.ecore,
-    )
-    mf = build_reference_uhf_solver(fcidump_data, mol)
-    mf.mo_coeff = (data["mo_coeff_a"], data["mo_coeff_b"])
-    mf.mo_occ = mo_occ
-    mf.mo_energy = (data["mo_energy_a"], data["mo_energy_b"])
-    mf.e_tot = float(data["energy"])
-    mf.converged = bool(data["converged"])
-    return mf
-
-
 def run_reference_ucc(
     fcidump_data,
     uhf_npz_path: str,
@@ -81,9 +58,7 @@ def run_reference_ucc(
     observable_inputs: dict | None = None,
 ):
     """Run active-space UCCSD or UCCSD(T) from a saved reference-UHF state."""
-    from pyscf import cc
-
-    mf = load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
+    mf = _load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
     mycc = cc.UCCSD(mf)
     mycc.conv_tol = conv_tol
     mycc.max_cycle = max_cycle
@@ -154,7 +129,7 @@ def run_reference_ucc(
             @ np.asarray(dm1b_mo, dtype=float)
             @ np.asarray(mf.mo_coeff[1], dtype=float).T
         )
-        post_scf_observables = analyze_active_space_spin_observables(
+        post_scf_observables = _analyze_active_space_spin_observables(
             dm_a_active=dm1a_active,
             dm_b_active=dm1b_active,
             active_indices=np.asarray(active_indices, dtype=int),
@@ -167,7 +142,6 @@ def run_reference_ucc(
             energy_hartree=float(energy),
             s2=s_squared,
             final_state_signature=observable_inputs.get("final_state_signature", ""),
-            chan_benchmark_json=observable_inputs.get("chan_benchmark_json"),
             theory=observable_inputs.get("theory", method),
         )
         two_s = post_scf_observables.get("two_s")
@@ -175,7 +149,7 @@ def run_reference_ucc(
         two_sz_fe1 = primary.get("Fe1")
         two_sz_fe2 = primary.get("Fe2")
 
-    return ReferenceUCCResult(
+    return _ReferenceUCCResult(
         method=method,
         energy=float(energy),
         correlation_energy=float(corr_energy),
@@ -197,7 +171,7 @@ def run_reference_ucc(
     )
 
 
-def save_reference_ucc_result(result: ReferenceUCCResult, npz_path: str):
+def _save_reference_ucc_result(result: _ReferenceUCCResult, npz_path: str):
     """Save active-space UCC results in the same NPZ schema used by the parser."""
     payload = {
         "uhf_energy": result.uhf_energy,

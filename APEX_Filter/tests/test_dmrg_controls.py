@@ -3,7 +3,7 @@
 from shared.dmrg_controls import build_dmrg_sweep_schedule, compress_dmrg_schedule_for_dmrgci
 
 
-def test_workflow_schedule_matches_legacy_shape():
+def test_workflow_schedule_matches_canonical_shape():
     bond_dims, noises, thresholds = build_dmrg_sweep_schedule(
         mode="workflow",
         bond_dim=500,

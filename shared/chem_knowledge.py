@@ -18,8 +18,8 @@ import re
 
 import yaml
 
-from .element_data import get_metal_row
-from .models import ClusterInfo
+from .element_data import get_metal_row as _get_metal_row
+from .models import ClusterInfo as _ClusterInfo
 
 _SHARED_KB = os.path.abspath(os.path.join(os.path.dirname(__file__), "knowledge_base"))
 
@@ -113,7 +113,7 @@ def get_valence_s_orbital(element: str) -> str | None:
     if element in db:
         row = db[element].get("row", "")
     if not row:
-        row = get_metal_row(element)
+        row = _get_metal_row(element)
     return _VALENCE_S_SHELL.get(row)
 
 
@@ -126,7 +126,7 @@ def _parse_formula(formula: str) -> dict[str, int]:
     return counts
 
 
-def match_cluster_template(cluster_info: ClusterInfo) -> dict | None:
+def match_cluster_template(cluster_info: _ClusterInfo) -> dict | None:
     """Return the first cluster template matching formula/charge/spin metadata."""
     clusters_db = get_cluster_templates_db()
     formula = cluster_info.formula

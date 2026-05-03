@@ -1,24 +1,23 @@
 """Active space quality assessment.
 
-Validates active spaces using NOON analysis, entropy analysis,
-and chemical intuition checks.
+Validates active spaces using NOON analysis and report generation.
 """
 
 import numpy as np
 
-from . import (
-    CAS,
-    ActiveSpaceQuality,
+from shared.models import (
+    CAS as _CAS,
+    ActiveSpaceQuality as _ActiveSpaceQuality,
 )
 
 
 
-def validate_noon(
-    active_orbitals: CAS,
+def _validate_noon(
+    active_orbitals: _CAS,
     expected_types: list[dict] | None = None,
     noon_lo: float = 0.02,
     noon_hi: float = 1.98,
-) -> ActiveSpaceQuality:
+) -> _ActiveSpaceQuality:
     """Validate active space quality using Natural Orbital Occupation Numbers (NOON).
 
     Parameters
@@ -131,7 +130,7 @@ def validate_noon(
     # Clamp to [0, 1]
     quality_score = float(max(0.0, min(1.0, quality_score)))
 
-    return ActiveSpaceQuality(
+    return _ActiveSpaceQuality(
         noon_values=noon,
         noon_warning=noon_warnings,
         n_doubly_occupied=n_doubly,
@@ -143,135 +142,7 @@ def validate_noon(
     )
 
 
-def analyze_entropy(
-    entropy_values,
-    orbital_labels: list[str],
-    threshold_critical: float = 0.5,
-    threshold_removable: float = 0.1,
-) -> list[dict]:
-    """Analyze single-orbital entropy values (from DMRG calculations).
-
-    Parameters
-    ----------
-    entropy_values : array-like
-        Single-orbital entropy values.
-    orbital_labels : list[str]
-        Orbital label strings corresponding to each entropy value.
-    threshold_critical : float
-        Entropy at or above this threshold marks a critical orbital (default 0.5).
-    threshold_removable : float
-        Entropy below this threshold marks a potentially removable orbital
-        (default 0.1).
-
-    Returns
-    -------
-    list[dict]
-        Each dict contains ``orbital_idx``, ``label``, ``entropy``,
-        ``classification``, and ``recommendation``.
-    """
-    entropy = np.asarray(entropy_values, dtype=float)
-    results: list[dict] = []
-
-    for idx in range(len(entropy)):
-        s = float(entropy[idx])
-        label = orbital_labels[idx] if idx < len(orbital_labels) else f"orb_{idx}"
-
-        if s >= threshold_critical:
-            classification = "critical"
-            recommendation = "Must keep in active space"
-        elif s >= threshold_removable:
-            classification = "active"
-            recommendation = "Important for correlation"
-        else:
-            classification = "removable"
-            recommendation = "Consider removing to reduce cost"
-
-        results.append({
-            "orbital_idx": idx,
-            "label": label,
-            "entropy": s,
-            "classification": classification,
-            "recommendation": recommendation,
-        })
-
-    return results
-
-
-def compute_quality_score(
-    noon_values,
-    orbital_character_map: dict,
-    expected_types: list[dict],
-    entropy_values=None,
-) -> float:
-    """Compute a composite quality score for the active space.
-
-    Parameters
-    ----------
-    noon_values : array-like
-        NOON values for the active orbitals.
-    orbital_character_map : dict
-        Mapping of ``{orb_idx: "Fe1_3d"}`` chemical labels.
-    expected_types : list[dict]
-        Expected orbital type dicts from Stage 1 analysis.
-    entropy_values : array-like or None
-        Optional single-orbital entropy values.
-
-    Returns
-    -------
-    float
-        Quality score between 0 and 1.
-    """
-    noon = np.asarray(noon_values, dtype=float)
-
-    # ── 1. NOON quality (weight 0.4) ─────────────────────────────
-    if len(noon) > 0:
-        good_noon = np.sum((noon > 0.02) & (noon < 1.98))
-        noon_quality = float(good_noon) / float(len(noon))
-    else:
-        noon_quality = 0.0
-
-    # ── 2. Chemical coverage quality (weight 0.4) ────────────────
-    if expected_types:
-        n_found = 0
-        for exp in expected_types:
-            atom_label = exp.get("atom_label", "")
-            ao_type = exp.get("ao_type", "")
-            element = exp.get("element", "")
-            search_key = f"{atom_label}_{ao_type}" if atom_label and ao_type else ""
-
-            found = False
-            if search_key:
-                for label in orbital_character_map.values():
-                    if search_key.lower() in label.lower():
-                        found = True
-                        break
-            if not found and element and ao_type:
-                for label in orbital_character_map.values():
-                    if ao_type.lower() in label.lower() and element.lower() in label.lower():
-                        found = True
-                        break
-            if found:
-                n_found += 1
-
-        coverage_quality = float(n_found) / float(len(expected_types))
-    else:
-        # No expected types specified — neutral score
-        coverage_quality = 1.0
-
-    # ── 3. Entropy quality (weight 0.2) ──────────────────────────
-    if entropy_values is not None and len(entropy_values) > 0:
-        entropy = np.asarray(entropy_values, dtype=float)
-        n_critical_or_active = int(np.sum(entropy >= 0.1))
-        entropy_quality = float(n_critical_or_active) / float(len(entropy))
-    else:
-        entropy_quality = 1.0  # neutral when no entropy data available
-
-    # ── 4. Weighted sum ──────────────────────────────────────────
-    score = 0.4 * noon_quality + 0.4 * coverage_quality + 0.2 * entropy_quality
-    return float(max(0.0, min(1.0, score)))
-
-
-def print_quality_report(quality: ActiveSpaceQuality) -> str:
+def _print_quality_report(quality: _ActiveSpaceQuality) -> str:
     """Generate a human-readable quality report string.
 
     Parameters

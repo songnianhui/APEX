@@ -1,44 +1,48 @@
-"""Computation-Based CAS Builder
+"""Computation-driven CAS construction helpers.
 
-Orchestrates all computation-driven CAS (Complete Active Space) construction:
-  1. Build molecule with basis set and run high-spin SCF
-  2. AVAS (Automated Valence Active Space) projection
-  3. Compute unrestricted natural orbitals (UNOs)
-  4. Split-localize the UNOs by occupation blocks
-  5. Select active orbitals by character (projection onto AO subsets)
-  6. (LUO variant) Localize alpha/beta orbitals separately for DMRG
+This module hosts the canonical staged-build helpers behind the
+``apex-cas scf`` / ``apex-cas buildcas`` workflow, with
+``apex-cas compute`` retained as a convenience wrapper over the same stages.
+The intended public surface is intentionally small:
 
-Public API:
-  - run_scf_initialization(): Build mol + run SCF + save chkfile
-  - build_cas_from_cluster(): Unified entry point for all cpt_cas_types
+- ``run_scf_initialization(...)``
+- ``build_cas_from_mean_field(...)``
+
+The many construction branches below are internal pipeline stages for UNO,
+LUO, AVAS, and related orbital-manipulation routes.
 """
 
+import dataclasses
 import os
-import sys
 import warnings
 
 import numpy as np
 import pyscf  # PySCF: 量子化学计算框架
 from pyscf import (  # PySCF: DFT模块、分子构建(gto)、轨道定域化(lo)、Hartree-Fock(scf)
     dft,
-    gto,
     scf,
 )
 
-from . import (
-    CAS,
-    ActiveSpaceLevel,
-    AVASConfig,
-    ClusterInfo,
-    ComputationSettings,
-    OrbitalGroup,
+from shared.models import (
+    CAS as _CAS,
+    ActiveSpaceLevel as _ActiveSpaceLevel,
+    AVASConfig as _AVASConfig,
+    ClusterInfo as _ClusterInfo,
+    ComputationSettings as _ComputationSettings,
+    OrbitalGroup as _OrbitalGroup,
 )
+from shared.element_data import ELEMENTS as _ELEMENTS, get_valence_shells as _get_valence_shells
+from shared.molecule_builder import build_mol_with_basis as _shared_build_mol_with_basis
 from shared.chem_knowledge import (
     get_ligands_db as _get_ligands_db,
     get_metals_db as _get_metals_db,
     get_valence_s_orbital as _valence_s_for_element,
 )
-from shared.cluster_info_labels import resolve_explicit_label, resolve_metal_site_label
+from shared.cluster_info_labels import (
+    resolve_explicit_label as _resolve_explicit_label,
+    resolve_metal_site_label as _resolve_metal_site_label,
+)
+from shared.cluster_info_labels import require_authoritative_cluster_info as _require_authoritative_cluster_info
 from shared.orbital_methods.localization import (
     build_localization_params_from_settings as _shared_build_localization_params_from_settings,
     localize_orbitals_with_params as _shared_localize_orbitals_with_params,
@@ -59,13 +63,13 @@ from shared.orbital_methods.projection import (
 # ──────────────────────────────────────────────────────────────────
 
 
-def build_cas_from_cluster(
-    cluster_info: ClusterInfo,
-    computation_settings: ComputationSettings = None,
+def _build_cas_from_cluster(
+    cluster_info: _ClusterInfo,
+    computation_settings: _ComputationSettings = None,
     cpt_cas_type: str = "uno",
     localization_method: str = "boys",
     projection_threshold: float = 0.3,
-    avas_config: AVASConfig = None,
+    avas_config: _AVASConfig = None,
     save_dir: str = ".",
 ) -> tuple:
     """Build CAS directly from a cluster description.
@@ -91,7 +95,7 @@ def build_cas_from_cluster(
         - chkfile_path: Path to saved checkpoint file
     """
     if computation_settings is None:
-        computation_settings = ComputationSettings()
+        computation_settings = _ComputationSettings()
 
     mol, mf, chkfile_path = run_scf_initialization(
         cluster_info,
@@ -111,19 +115,6 @@ def build_cas_from_cluster(
     return cas, mol, mf, chkfile_path
 
 
-def _build_source_method_prefix(settings: ComputationSettings) -> str:
-    """Build the source-method prefix used in metadata/reporting."""
-    return _shared_build_source_method_prefix(settings)
-
-
-def _build_localization_params(
-    settings: ComputationSettings,
-    localization_method: str,
-):
-    """Build localization keyword arguments from computation settings."""
-    return _shared_build_localization_params_from_settings(settings, localization_method)
-
-
 def _dispatch_computed_cas_builder(
     mol,
     mf,
@@ -134,11 +125,11 @@ def _dispatch_computed_cas_builder(
     projection_threshold: float,
     source_prefix: str,
     loc_params,
-    avas_config: AVASConfig | None,
+    avas_config: _AVASConfig | None,
 ):
     """Dispatch to the requested computed-CAS construction pipeline."""
     if cpt_cas_type == "avas":
-        avas_cfg = avas_config if avas_config is not None else AVASConfig()
+        avas_cfg = avas_config if avas_config is not None else _AVASConfig()
         cas, _expected_types = _construct_avas(mol, mf, cluster_info, avas_cfg)
         return cas
     if cpt_cas_type == "luo":
@@ -184,12 +175,12 @@ def _dispatch_computed_cas_builder(
 def build_cas_from_mean_field(
     mol,
     mf,
-    cluster_info: ClusterInfo,
-    computation_settings: ComputationSettings = None,
+    cluster_info: _ClusterInfo,
+    computation_settings: _ComputationSettings = None,
     cpt_cas_type: str = "uno",
     localization_method: str = "boys",
     projection_threshold: float = 0.3,
-    avas_config: AVASConfig = None,
+    avas_config: _AVASConfig = None,
 ):
     """Build CAS from an existing SCF mean-field object.
 
@@ -198,10 +189,13 @@ def build_cas_from_mean_field(
     planned ``apex-cas buildcas`` command.
     """
     if computation_settings is None:
-        computation_settings = ComputationSettings()
+        computation_settings = _ComputationSettings()
 
-    source_prefix = _build_source_method_prefix(computation_settings)
-    loc_params = _build_localization_params(computation_settings, localization_method)
+    source_prefix = _shared_build_source_method_prefix(computation_settings)
+    loc_params = _shared_build_localization_params_from_settings(
+        computation_settings,
+        localization_method,
+    )
     return _dispatch_computed_cas_builder(
         mol,
         mf,
@@ -221,8 +215,8 @@ def build_cas_from_mean_field(
 
 
 def run_scf_initialization(
-    cluster_info: ClusterInfo,
-    computation_settings: ComputationSettings,
+    cluster_info: _ClusterInfo,
+    computation_settings: _ComputationSettings,
     save_dir: str = ".",
 ) -> tuple:
     """Build molecule, run high-spin SCF, and save checkpoint.
@@ -257,7 +251,7 @@ def run_scf_initialization(
     if computation_settings.scf_spin is not None:
         cluster_info.target_spin = computation_settings.scf_spin
 
-    mol = build_mol_with_basis(cluster_info, computation_settings)
+    mol = _shared_build_mol_with_basis(cluster_info, computation_settings)
 
     # Restore original target_spin after building mol
     cluster_info.target_spin = original_spin
@@ -276,47 +270,12 @@ def run_scf_initialization(
 # ──────────────────────────────────────────────────────────────────
 # PySCF interface helpers
 # ──────────────────────────────────────────────────────────────────
-def build_mol_with_basis(cluster_info, settings: ComputationSettings):
-    """Build PySCF Mole object with per-element basis set support.
-
-    Uses settings.get_basis(element) for each element in the cluster.
-
-    Args:
-        cluster_info: ClusterInfo object.
-        settings: ComputationSettings with basis configuration.
-
-    Returns:
-        Built PySCF Mole object.
-    """
-    from shared.setting_utils import build_basis_dict
-
-    atoms = []
-    for elem, pos in zip(cluster_info.all_elements, cluster_info.all_positions):
-        atoms.append(f"{elem} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}")
-
-    # Convert total spin S to PySCF's spin parameter: 2*Sz.
-    # For the high-spin reference state we always use maximal projection Sz = S,
-    # so spin_2s = 2*S = 2*Sz = nalpha - nbeta.
-    spin_2s = int(round(2 * cluster_info.target_spin))
-    basis_dict = build_basis_dict(cluster_info, settings)
-
-    mol = gto.M(  # PySCF: 构建分子对象（原子坐标、电荷、自旋多重度、基组字典）
-        atom="\n".join(atoms),
-        charge=cluster_info.total_charge,
-        spin=spin_2s,
-        basis=basis_dict,
-        symmetry=False,
-        verbose=1,  # reduced verbosity to avoid excessive output in production
-    )
-    return mol
-
-
-def _make_chkfile_name(cluster_info: ClusterInfo, settings: ComputationSettings) -> str:
+def _make_chkfile_name(cluster_info: _ClusterInfo, settings: _ComputationSettings) -> str:
     """Generate a descriptive checkpoint filename."""
     return _get_output_stem(cluster_info, settings) + ".chk"
 
 
-def _get_output_stem(cluster_info: ClusterInfo, settings: ComputationSettings) -> str:
+def _get_output_stem(cluster_info: _ClusterInfo, settings: _ComputationSettings) -> str:
     """Generate the common naming stem for all output files.
 
     The stem follows the pattern: ``{formula}_{method}_{xc}_{basis}``.
@@ -330,35 +289,13 @@ def _get_output_stem(cluster_info: ClusterInfo, settings: ComputationSettings) -
     xc = settings.xc_functional or "none"
     # Use basis_set_file name when available, fall back to basis_set_default
     if settings.basis_set_file:
-        import os
         basis = os.path.splitext(os.path.basename(settings.basis_set_file))[0]
     else:
         basis = settings.basis_set_default or "unknown"
     stem = f"{formula}_{method}_{xc}_{basis}"
     return stem.replace(" ", "_").replace("|", "_")
 
-
-# def _build_mol(cluster_info, basis_set):
-#     """Build PySCF Mole object from ClusterInfo."""
-#     atoms = []
-#     for elem, pos in zip(cluster_info.all_elements, cluster_info.all_positions):
-#         atoms.append(f"{elem} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}")
-
-#     # Determine spin (2*Sz) from target_spin
-#     spin_2s = int(round(2 * cluster_info.target_spin))
-
-#     mol = gto.M(  # PySCF: 构建分子对象（原子坐标、电荷、自旋多重度、基组）
-#         atom="\n".join(atoms),
-#         charge=cluster_info.total_charge,
-#         spin=spin_2s,
-#         basis=basis_set,
-#         symmetry=False,
-#         verbose=4,
-#     )
-#     return mol
-
-
-def _run_high_spin_scf(mol, settings: ComputationSettings, chkfile_path: str = None):
+def _run_high_spin_scf(mol, settings: _ComputationSettings, chkfile_path: str = None):
     """Run high-spin SCF calculation with two-stage convergence.
 
     Stage 1 (rough): looser conv_tol, guaranteed level_shift ≥ 0.1 for stability.
@@ -397,9 +334,6 @@ def _run_high_spin_scf(mol, settings: ComputationSettings, chkfile_path: str = N
         # 当 smearing/frac_occ 已启用时，不强制 level_shift：
         # smearing/frac_occ 本身已在稳定占据数，level_shift 会扭曲 Fermi 面，
         # 导致 shift 移除后 smearing 占据数剧变、密度崩溃。
-        # if settings.smearing_method != "none" or settings.frac_occ:
-        #     stage1_shift = settings.scf_level_shift  # 使用用户的 level_shift（通常为 0）
-        # else:
         stage1_shift = max(settings.scf_level_shift, 0.3)  # 传统稳定化
 
         print(
@@ -428,7 +362,7 @@ def _run_high_spin_scf(mol, settings: ComputationSettings, chkfile_path: str = N
             # Keep damp and diis_space from Stage 1
             mf.kernel()  # PySCF: 执行 SCF 自洽场迭代（Stage 2）
     else:
-        print(f"\n  SCF Stage 1: skipped (scf_stage1_rough=False)")
+        print("\n  SCF Stage 1: skipped (scf_stage1_rough=False)")
         # Skip Stage 1, run directly with user-specified settings
         mf.conv_tol = settings.conv_tol
         mf.level_shift = settings.scf_level_shift
@@ -441,8 +375,7 @@ def _run_high_spin_scf(mol, settings: ComputationSettings, chkfile_path: str = N
     # 剥离 smearing/frac_occ 装饰器，对 Stage 2 密度做二阶优化。
     # 当 scf_stage3_newton=False 时跳过（用于匹配 ORCA 等程序的 SCF 行为）。
     if settings.scf_stage3_newton:
-        print(f"\n  SCF Stage 3: Newton-Raphson refinement")
-        import dataclasses
+        print("\n  SCF Stage 3: Newton-Raphson refinement")
 
         newton_settings = dataclasses.replace(
             settings, frac_occ=False, smearing_method="none"
@@ -461,7 +394,7 @@ def _run_high_spin_scf(mol, settings: ComputationSettings, chkfile_path: str = N
         mf_newton.kernel(dm0=dm0)  # PySCF: 执行 Newton-Raphson SCF 迭代
         mf = mf_newton
     else:
-        print(f"\n  SCF Stage 3: skipped (scf_stage3_newton=False)")
+        print("\n  SCF Stage 3: skipped (scf_stage3_newton=False)")
 
     # ── Check convergence ──
     if not mf.converged:  # PySCF: 检查 SCF 收敛状态
@@ -474,16 +407,11 @@ def _run_high_spin_scf(mol, settings: ComputationSettings, chkfile_path: str = N
         # 1) 如果配置允许，直接继续
         if settings.scf_allow_unconverged:
             print("  scf_allow_unconverged=True, continuing with unconverged result.")
-        # 2) 如果是交互式终端，询问用户
-        elif sys.stdin.isatty():
-            resp = input("  Continue with unconverged result? (y/n): ").strip().lower()
-            if resp != "y":
-                raise RuntimeError("SCF did not converge. Aborting at user request.")
-        # 3) 非交互环境且未配置允许 → 报错
+        # 2) 否则明确失败，由配置控制是否允许继续
         else:
             raise RuntimeError(
                 "SCF did not converge. "
-                "Use --yes flag or set scf_allow_unconverged: true in YAML to continue."
+                "Set scf_allow_unconverged: true in YAML to continue."
             )
 
     # ── Solvent energy traceability ──
@@ -492,12 +420,12 @@ def _run_high_spin_scf(mol, settings: ComputationSettings, chkfile_path: str = N
         print(f"  Solvent energy (ddCOSMO): {e_solvent:.10f} Hartree")
         print(f"  Gas-phase energy:         {mf.e_tot - e_solvent:.10f} Hartree")
     else:
-        print(f"  No solvent model active.")
+        print("  No solvent model active.")
 
     return mf
 
 
-def _build_mf_object(mol, settings: ComputationSettings):
+def _build_mf_object(mol, settings: _ComputationSettings):
     """Build the SCF mean-field object with relativistic and solvation corrections.
 
     Returns the mf object without setting convergence parameters, so that the
@@ -594,10 +522,10 @@ def _construct_uno(
         loc_params: Optional dict of PM localization parameters.
     """
     # Step 2: Compute UNOs from alpha+beta density matrix
-    mo_coeff_uno, occ_uno = compute_unos(mol, mf)
+    mo_coeff_uno, occ_uno = _shared_compute_unos(mol, mf)
 
     # Step 3: Split-localize by occupation blocks
-    mo_coeff_loc, orbital_labels = split_localize(
+    mo_coeff_loc, orbital_labels = _split_localize(
         mol, mo_coeff_uno, occ_uno, cluster_info,
         method=localization_method, loc_params=loc_params,
     )
@@ -628,7 +556,7 @@ def _construct_uno(
     # Determine selection method label for metadata
     actual_selection_method = "noon"  # always NOON for UNO pipeline
 
-    return CAS(
+    return _CAS(
         mo_coeff_alpha=mo_active.copy(),
         mo_coeff_beta=mo_active.copy(),  # Same for restricted
         occupations=occ_active,
@@ -680,10 +608,10 @@ def _construct_uno_type2(
         loc_params: Optional dict of PM localization parameters.
     """
     # Step 2: Compute UNOs from alpha+beta density matrix
-    mo_coeff_uno, occ_uno = compute_unos(mol, mf)
+    mo_coeff_uno, occ_uno = _shared_compute_unos(mol, mf)
 
     # Step 3: Split-localize with core+active merged
-    mo_coeff_loc, orbital_labels = split_localize(
+    mo_coeff_loc, orbital_labels = _split_localize(
         mol, mo_coeff_uno, occ_uno, cluster_info,
         method=localization_method, loc_params=loc_params,
         merge_core_active=True,
@@ -733,7 +661,7 @@ def _construct_uno_type2(
     # Determine selection method label for metadata
     actual_selection_method = "noon"  # always NOON for UNO pipeline
 
-    return CAS(
+    return _CAS(
         mo_coeff_alpha=mo_active.copy(),
         mo_coeff_beta=mo_active.copy(),  # Same for restricted
         occupations=occ_active,
@@ -789,16 +717,16 @@ def _construct_luo(
     occ_beta[:n_occ_b] = 1.0
 
     # Localize alpha occupied
-    loc_a = _localize_orbitals(mol, mo_alpha[:, :n_occ_a], method=localization_method, loc_params=loc_params)
+    loc_a = _shared_localize_orbitals_with_params(mol, mo_alpha[:, :n_occ_a], method=localization_method, loc_params=loc_params)
     # Localize alpha virtual
-    loc_a_vir = _localize_orbitals(
+    loc_a_vir = _shared_localize_orbitals_with_params(
         mol, mo_alpha[:, n_occ_a:], method=localization_method, loc_params=loc_params
     )
 
     # Localize beta occupied
-    loc_b = _localize_orbitals(mol, mo_beta[:, :n_occ_b], method=localization_method, loc_params=loc_params)
+    loc_b = _shared_localize_orbitals_with_params(mol, mo_beta[:, :n_occ_b], method=localization_method, loc_params=loc_params)
     # Localize beta virtual
-    loc_b_vir = _localize_orbitals(
+    loc_b_vir = _shared_localize_orbitals_with_params(
         mol, mo_beta[:, n_occ_b:], method=localization_method, loc_params=loc_params
     )
 
@@ -823,7 +751,6 @@ def _construct_luo(
 
     # Generate labels
     labels_a = [f"LUO_a_{i}" for i in range(len(active_idx_a))]
-    labels_b = [f"LUO_b_{i}" for i in range(len(active_idx_b))]
     labels = labels_a  # Use alpha labels as primary
 
     # Compute projection weights for report (if cluster_info available)
@@ -835,7 +762,7 @@ def _construct_luo(
             mol, all_loc_a, cluster_info
         )
 
-    return CAS(
+    return _CAS(
         mo_coeff_alpha=mo_active_a.copy(),
         mo_coeff_beta=mo_active_b.copy(),
         occupations=None,  # LUO doesn't have UNO occupations
@@ -890,8 +817,8 @@ def _construct_alpha_sl(
     n_alpha = mol.nelec[0]  # PySCF: alpha 电子数
 
     # 2. Split-localize: occupied 和 virtual 使用各自的方法
-    loc_a_occ = _localize_orbitals(mol, mo_alpha[:, :n_alpha], method=loc_method_occ, loc_params=loc_params)
-    loc_a_vir = _localize_orbitals(mol, mo_alpha[:, n_alpha:], method=loc_method_vir, loc_params=loc_params)
+    loc_a_occ = _shared_localize_orbitals_with_params(mol, mo_alpha[:, :n_alpha], method=loc_method_occ, loc_params=loc_params)
+    loc_a_vir = _shared_localize_orbitals_with_params(mol, mo_alpha[:, n_alpha:], method=loc_method_vir, loc_params=loc_params)
     all_loc = np.hstack([loc_a_occ, loc_a_vir])
 
     # 3. 构建 occupation 数组：将总密度矩阵 D_α + D_β 投影到 localized alpha MO 基
@@ -940,7 +867,7 @@ def _construct_alpha_sl(
         f"{n_electrons} electrons (threshold={projection_threshold})"
     )
 
-    return CAS(
+    return _CAS(
         mo_coeff_alpha=mo_active.copy(),
         mo_coeff_beta=mo_active.copy(),  # 同一组空间轨道
         occupations=occ[active_indices],
@@ -965,19 +892,7 @@ def _construct_alpha_sl(
 # ──────────────────────────────────────────────────────────────────
 
 
-def compute_unos(mol, mf):
-    """Compute unrestricted natural orbitals from UKS/UHF density matrix.
-
-    Diagonalizes the total (alpha+beta) 1-RDM in the AO basis.
-
-    Returns:
-        (mo_coeff_uno, occupations) — natural orbital coefficients and
-        occupation numbers, sorted by decreasing occupation.
-    """
-    return _shared_compute_unos(mol, mf)
-
-
-def split_localize(
+def _split_localize(
     mol,
     mo_coeff,
     occupations,
@@ -1029,26 +944,6 @@ def split_localize(
         labels = _assign_character_labels(mol, localized, labels, cluster_info)
 
     return localized, labels
-def _localize_orbitals(mol, mo_coeff_block, method="boys", loc_params=None):
-    """Apply localization to a block of orbitals.
-
-    Args:
-        mol: PySCF Mole object.
-        mo_coeff_block: MO coefficient matrix block.
-        method: "boys" (Boys, default) or "pm" (Pipek-Mezey).
-        loc_params: Optional dict of PM parameters to set on the localization object.
-
-    Returns:
-        Localized MO coefficient block.
-    """
-    return _shared_localize_orbitals_with_params(
-        mol,
-        mo_coeff_block,
-        method=method,
-        loc_params=loc_params,
-    )
-
-
 def _build_target_ao_subspace(mol, cluster_info):
     """Build target AO indices using role-filtered valence (n, l) shell matching.
 
@@ -1073,15 +968,18 @@ def _build_target_ao_subspace(mol, cluster_info):
         to a sorted list of target AO indices.  ``"all"`` is the union of
         ``"metal"`` and ``"bridging"``.
     """
-    from .ao_shell_analysis import ELEMENTS, get_valence_shells
+    _require_authoritative_cluster_info(
+        cluster_info,
+        context="Projection target construction",
+    )
 
     metal_indices = {
         m.index for m in cluster_info.metals
-        if getattr(m, "projection_role", "metal_df") == "metal_df"
+        if m.projection_role == "metal_df"
     }
     bridge_indices = {
         b.index for b in cluster_info.bridging_atoms
-        if getattr(b, "projection_role", "bridging_p") == "bridging_p"
+        if b.projection_role == "bridging_p"
     }
 
     L_CHAR_TO_INT = {"s": 0, "p": 1, "d": 2, "f": 3}
@@ -1090,15 +988,23 @@ def _build_target_ao_subspace(mol, cluster_info):
     valence_nl_map: dict[int, set[tuple[int, int]]] = {}
     for idx in metal_indices | bridge_indices:
         elem = mol.atom_symbol(idx)
-        Z = ELEMENTS.get(elem, 0)
+        Z = _ELEMENTS.get(elem, 0)
         if Z > 0:
-            val_shells = get_valence_shells(Z)
+            val_shells = _get_valence_shells(Z)
             all_nl = {(n, L_CHAR_TO_INT[lc]) for n, lc in val_shells}
             # Filter by atom role: metals keep d/f only, bridges keep p only
             if idx in metal_indices:
-                valence_nl_map[idx] = {(n, l) for n, l in all_nl if l >= 2}
+                valence_nl_map[idx] = {
+                    (principal_n, ang_mom)
+                    for principal_n, ang_mom in all_nl
+                    if ang_mom >= 2
+                }
             else:  # bridging
-                valence_nl_map[idx] = {(n, l) for n, l in all_nl if l == 1}
+                valence_nl_map[idx] = {
+                    (principal_n, ang_mom)
+                    for principal_n, ang_mom in all_nl
+                    if ang_mom == 1
+                }
 
     ao_loc = mol.ao_loc_nr()  # PySCF: per-shell AO offset array
     ao_labels = mol.ao_labels()  # PySCF: AO labels, e.g. "0 Fe 3dxy"
@@ -1107,7 +1013,7 @@ def _build_target_ao_subspace(mol, cluster_info):
 
     for ish in range(mol.nbas):
         ia = mol.bas_atom(ish)  # PySCF: atom index for this shell
-        l = mol.bas_angular(ish)  # PySCF: angular momentum quantum number
+        ang_mom = mol.bas_angular(ish)  # PySCF: angular momentum quantum number
         ao_start = ao_loc[ish]
         ao_end = ao_loc[ish + 1]
 
@@ -1127,7 +1033,7 @@ def _build_target_ao_subspace(mol, cluster_info):
                 i += 1
             n_shell = int(shell_str[:i]) if i > 0 else None
 
-        if n_shell is not None and (n_shell, l) in valence_nl:
+        if n_shell is not None and (n_shell, ang_mom) in valence_nl:
             ao_range = list(range(ao_start, ao_end))
             if ia in metal_indices:
                 metal_ao_indices.extend(ao_range)
@@ -1141,24 +1047,6 @@ def _build_target_ao_subspace(mol, cluster_info):
         "metal": metal_ao_indices,
         "bridging": bridging_ao_indices,
     }
-
-
-def _compute_proj_for_targets(mol, mo_coeff, target_ao_indices):
-    """Compute projection weight of every MO onto a given AO subset.
-
-    Parameters
-    ----------
-    mol : pyscf.gto.Mole
-    mo_coeff : ndarray (nao, nmo)
-    target_ao_indices : list[int]
-        Sorted AO indices defining the projection subspace.
-
-    Returns
-    -------
-    ndarray (nmo,)
-        Projection weights.
-    """
-    return _shared_compute_projection_weights_for_targets(mol, mo_coeff, target_ao_indices)
 
 
 def _compute_all_projection_weights(mol, mo_coeff, cluster_info):
@@ -1175,9 +1063,9 @@ def _compute_all_projection_weights(mol, mo_coeff, cluster_info):
     if not target_dict["all"]:
         return np.zeros(n_mo), np.zeros(n_mo), np.zeros(n_mo)
 
-    proj_all = _compute_proj_for_targets(mol, mo_coeff, target_dict["all"])
-    proj_metal = _compute_proj_for_targets(mol, mo_coeff, target_dict["metal"])
-    proj_bridging = _compute_proj_for_targets(mol, mo_coeff, target_dict["bridging"])
+    proj_all = _shared_compute_projection_weights_for_targets(mol, mo_coeff, target_dict["all"])
+    proj_metal = _shared_compute_projection_weights_for_targets(mol, mo_coeff, target_dict["metal"])
+    proj_bridging = _shared_compute_projection_weights_for_targets(mol, mo_coeff, target_dict["bridging"])
     return proj_all, proj_metal, proj_bridging
 
 
@@ -1189,7 +1077,7 @@ def _select_by_projection(mol, mo_coeff, n_active, cluster_info):
     if not target_ao_indices:
         return list(range(min(n_active, mo_coeff.shape[1])))
 
-    projections = _compute_proj_for_targets(mol, mo_coeff, target_ao_indices)
+    projections = _shared_compute_projection_weights_for_targets(mol, mo_coeff, target_ao_indices)
 
     # Select top n_active by projection weight
     selected = np.argsort(-projections)[:n_active]
@@ -1220,7 +1108,7 @@ def _select_by_projection_threshold(
     if not target_ao_indices:
         return list(range(mo_coeff.shape[1]))
 
-    projections = _compute_proj_for_targets(mol, mo_coeff, target_ao_indices)
+    projections = _shared_compute_projection_weights_for_targets(mol, mo_coeff, target_ao_indices)
 
     selected = [int(i) for i in range(mo_coeff.shape[1]) if projections[i] > threshold]
     return sorted(selected)
@@ -1233,11 +1121,11 @@ def _assign_character_labels(mol, mo_coeff, base_labels, cluster_info):
     localized orbital.
     """
     metal_map = {
-        m.index: resolve_metal_site_label(cluster_info, site_idx)
+        m.index: _resolve_metal_site_label(cluster_info, site_idx)
         for site_idx, m in enumerate(cluster_info.metals)
     }
     bridge_map = {
-        b.index: resolve_explicit_label(
+        b.index: _resolve_explicit_label(
             getattr(b, "label", ""),
             f"{b.element}{b.index + 1}",
             cluster_info=cluster_info,
@@ -1303,9 +1191,9 @@ def _assign_character_labels(mol, mo_coeff, base_labels, cluster_info):
 def _construct_avas(
     mol,
     mf,
-    cluster_info: ClusterInfo,
-    config: AVASConfig,
-) -> tuple[CAS, list[dict]]:
+    cluster_info: _ClusterInfo,
+    config: _AVASConfig,
+) -> tuple[_CAS, list[dict]]:
     """AVAS-based CAS construction.
 
     Args:
@@ -1330,7 +1218,7 @@ def _construct_avas(
         valence_orbitals = _build_avas_valence_from_knowledge_base(cluster_info)
 
     # 2. Run AVAS selection.
-    selected_indices, projection_weights = avas_select(
+    selected_indices, projection_weights = _avas_select(
         mol,
         mf,
         mo_coeff,
@@ -1360,11 +1248,11 @@ def _construct_avas(
         f"[threshold={config.avas_threshold}]"
     )
 
-    active_space = CAS(
+    active_space = _CAS(
         n_electrons=n_electrons,
         n_orbitals=n_orbitals,
         orbital_groups=orbital_groups,
-        level=ActiveSpaceLevel.STANDARD,
+        level=_ActiveSpaceLevel.STANDARD,
         description=description,
         stage="computed",
         cpt_cas_type="avas",
@@ -1377,7 +1265,7 @@ def _construct_avas(
 
 
 def _build_avas_valence_from_knowledge_base(
-    cluster_info: ClusterInfo,
+    cluster_info: _ClusterInfo,
 ) -> dict[str, list[str]]:
     """Automatically infer AVAS target valence orbitals from the knowledge base.
 
@@ -1434,7 +1322,7 @@ def _build_avas_valence_from_knowledge_base(
 # ──────────────────────────────────────────────────────────────────
 # AVAS selection function
 # ──────────────────────────────────────────────────────────────────
-def avas_select(
+def _avas_select(
     mol,
     mf,
     mo_coeff: np.ndarray,
@@ -1554,7 +1442,7 @@ def _estimate_active_electrons(
     mol,
     mo_coeff: np.ndarray,
     selected_indices: list[int],
-    cluster_info: ClusterInfo,
+    cluster_info: _ClusterInfo,
 ) -> int:
     """Estimate the number of active electrons in the selected orbitals.
 
@@ -1583,8 +1471,8 @@ def _estimate_active_electrons(
 
 def _build_orbital_groups(
     valence_orbitals: dict[str, list[str]],
-    cluster_info: ClusterInfo,
-) -> list[OrbitalGroup]:
+    cluster_info: _ClusterInfo,
+) -> list[_OrbitalGroup]:
     """Build OrbitalGroup list from the valence_orbitals specification.
 
     Each unique element in valence_orbitals maps to one OrbitalGroup per
@@ -1592,7 +1480,7 @@ def _build_orbital_groups(
     """
     metals_db = _get_metals_db()
     ligands_db = _get_ligands_db()
-    groups: list[OrbitalGroup] = []
+    groups: list[_OrbitalGroup] = []
 
     # Count orbitals per AO type (s->1, p->3, d->5).
     _ao_capacity = {"s": 1, "p": 3, "d": 5, "f": 7}
@@ -1626,8 +1514,8 @@ def _build_orbital_groups(
             n_elec = 0
 
         groups.append(
-            OrbitalGroup(
-                atom_label=resolve_metal_site_label(cluster_info, site_idx),
+            _OrbitalGroup(
+                atom_label=_resolve_metal_site_label(cluster_info, site_idx),
                 orbital_type="+".join(ao_types),
                 n_orbitals=n_orb,
                 n_electrons=n_elec,
@@ -1653,8 +1541,8 @@ def _build_orbital_groups(
             n_elec = 6  # conservative default
 
         groups.append(
-            OrbitalGroup(
-                atom_label=resolve_explicit_label(
+            _OrbitalGroup(
+                atom_label=_resolve_explicit_label(
                     getattr(bridge, "label", ""),
                     f"{elem}{bridge.index}",
                     cluster_info=cluster_info,

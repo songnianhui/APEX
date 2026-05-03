@@ -1,4 +1,4 @@
-"""Regression tests for DMRG subprocess orchestration."""
+"""Regression tests for DMRG subprocess orchestration and result parsing."""
 
 from __future__ import annotations
 
@@ -125,11 +125,11 @@ def test_run_reference_dmrg_rebuilds_empty_schedule_lists(monkeypatch, tmp_path)
     assert result.thresholds[-12:] == [1e-9] * 12
 
 
-def test_save_reference_dmrg_result_writes_h5(tmp_path):
-    from apex_filter.reference_dmrg import ReferenceDMRGResult, save_reference_dmrg_result
+def test_internal_reference_dmrg_result_writer_writes_h5(tmp_path):
+    from apex_filter.reference_dmrg import _ReferenceDMRGResult, _save_reference_dmrg_result
 
     out_npz = tmp_path / "toy_dmrg.npz"
-    result = ReferenceDMRGResult(
+    result = _ReferenceDMRGResult(
         method="DMRG",
         energy=-1.23,
         correlation_energy=-0.45,
@@ -146,18 +146,51 @@ def test_save_reference_dmrg_result_writes_h5(tmp_path):
         thresholds=[1e-4, 1e-6, 1e-9],
         wall_time_s=12.34,
         log_path=str(tmp_path / "toy_dmrg.log"),
+        fcidump_path=str(tmp_path / "FCIDUMP.test"),
         reference_state_path=str(tmp_path / "ref_uhf.npz"),
         basis_state_path=str(tmp_path / "basis.npz"),
         scratch_dir=str(tmp_path / "scratch"),
     )
-    save_reference_dmrg_result(result, str(out_npz))
+    _save_reference_dmrg_result(
+        result,
+        str(out_npz),
+        label="BS7|235",
+        family="BS7",
+        settings_payload={
+            "control_source": "/tmp/method_controls.yaml",
+            "theory": "DMRG",
+            "bond_dim": 500,
+            "schedule_mode": "benchmark",
+        },
+    )
     out_h5 = out_npz.with_suffix(".h5")
     assert out_h5.exists()
     with h5py.File(out_h5, "r") as f:
         assert "metadata" in f
         assert "schedule" in f
         assert "dmrg_diagnostics" in f
+        assert "density_matrices" in f
         assert f["metadata"].attrs["artifact_type"] == "apex_filter_step8_dmrg_state"
+        assert f["metadata"].attrs["label"] == "BS7|235"
+        assert f["metadata"].attrs["family"] == "BS7"
+        assert f["metadata"].attrs["fcidump_path"] == str(tmp_path / "FCIDUMP.test")
+        assert f["metadata"].attrs["reference_state_path"] == str(tmp_path / "ref_uhf.npz")
+        assert f["metadata"].attrs["basis_state_path"] == str(tmp_path / "basis.npz")
+        assert "settings_json" in f["metadata"].attrs
+        settings = json.loads(f["metadata"].attrs["settings_json"])
+        assert settings["control_source"] == "/tmp/method_controls.yaml"
+        assert settings["theory"] == "DMRG"
+        assert settings["requested_config"]["theory"] == "DMRG"
+        assert settings["effective_method"]["theory"] == "DMRG"
+        assert settings["effective_method"]["schedule_mode"] == "benchmark"
+        assert settings["effective_parameters"]["bond_dim"] == 500
+        assert settings["effective_parameters"]["n_sweeps"] == 30
+        assert settings["effective_parameters"]["twosite_to_onesite"] is None
+        assert settings["effective_parameters"]["dav_max_iter"] is None
+        assert settings["effective_parameters"]["dav_def_max_size"] is None
+        assert settings["effective_parameters"]["dav_rel_conv_thrd"] is None
+        assert settings["effective_parameters"]["dav_type"] is None
+        assert f["schedule"].attrs["n_sweeps"] == 30
 
 
 def test_run_reference_dmrg_recovers_last_energy_from_worker_output(monkeypatch, tmp_path):

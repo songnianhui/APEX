@@ -1,103 +1,100 @@
-# Session-local numerical controls for APEX_Filter.
-# Copy semantics:
-# - This shared template seeds `filter_session/method_controls.yaml`.
-# - Users are expected to edit the session-local copy, not this shared file.
-# General convention:
-# - Comments describe physical / chemical meaning and common choices.
-# - `null` means "leave to backend/project default inference".
-
 enumerate:
-  target_sz: null # Optional override for Step 2 enumeration target Sz. `null` = use cluster_info.target_spin from Step 1.
-  forced_oxidation: null # Optional dict {site_idx: oxidation_state} used to pin specific metal oxidation states during enumeration.
-  max_configs: null # Optional hard cap on the total number of enumerated electronic configurations.
+  target_sz: null
+  forced_oxidation: null
+  max_configs: null
 
 uhf:
-  conv_tol: 1.0e-08 # SCF energy convergence threshold. Smaller = tighter SCF; 1e-8 is a typical benchmark setting.
-  max_cycle: 2000 # Maximum SCF iterations. Increase for difficult broken-symmetry cases.
-  stabilize_cycles: 20 # How many final SCF cycles are checked for spin/orbital stability.
-  level_shift: 0.3 # Virtual-space level shift (Eh). Often 0.1-0.5; larger values stabilize but can slow convergence.
-  damp: 0.2 # Linear density damping in early SCF. Typical range 0.0-0.5.
-  newton_refine: false # Whether to follow SCF with a second-order / Newton refinement.
-  newton_max_cycle: 8 # Maximum Newton iterations if `newton_refine=true`.
+  conv_tol: 1.0e-08
+  max_cycle: 2000
+  stabilize_cycles: 20
+  level_shift: 0.3
+  damp: 0.2
+  newton_refine: false
+  newton_max_cycle: 8
 
 ccsd:
-  code: pyscf # Current supported backend for step4. Canonical choice: `pyscf`.
-  basis_set: cc-pVDZ # Record-only field on the active-space FCIDUMP route. Actual Hamiltonian basis comes from the upstream APEX_CAS FCIDUMP (for example `tzp-dkh`); this value is not used to rebuild a new molecular AO basis in step4.
+  code: pyscf
+  # Record-only on the active-space FCIDUMP route. The actual Hamiltonian basis
+  # is inherited from APEX_CAS FCIDUMP generation (`tzp-dkh` for this case).
+  basis_set: cc-pVDZ
 
 ccsd_t:
-  code: pyscf # Current supported backend for step5. Canonical choice: `pyscf`.
-  basis_set: cc-pVDZ # Record-only field on the active-space FCIDUMP route. Actual Hamiltonian basis comes from the upstream APEX_CAS FCIDUMP; this value is ignored numerically in step5.
-  n_final: 5 # Intended number of states retained for the next higher-level stage.
+  code: pyscf
+  # Record-only on the active-space FCIDUMP route. This value is ignored
+  # numerically; the active-space Hamiltonian still comes from `tzp-dkh`.
+  basis_set: cc-pVDZ
+  n_final: 5
 
 ccsdt:
-  code: hast_ucc # Current supported backend for step6. Canonical choice: `hast_ucc`.
-  basis_set: cc-pVDZ # Record-only field on the active-space FCIDUMP route. Actual Hamiltonian basis comes from the upstream APEX_CAS FCIDUMP; this value is ignored numerically in step6.
-  n_final: 5 # Intended number of states retained for downstream high-level steps.
-  conv_tol: 1.0e-08 # Energy convergence threshold for iterative CC equations.
-  residual_tol: 1.0e-06 # Amplitude / residual convergence threshold; often the harder criterion for CCSDT.
-  max_cycle: 2000 # Maximum CC iterations. Large values are sometimes needed for multireference-like states.
-  lambda_max_cycle: 500 # Maximum lambda-equation iterations for post-SCF observables. Increase if CCSDT energy converges but observable extraction stalls.
-  diis_space: 6 # DIIS history size. Common values: 6-12.
-  diis_start_cycle: 0 # Iteration index where DIIS starts. Delay DIIS if early iterations are unstable.
-  iterative_damping: 1.0 # Iterative damping factor. 1.0 = none; values < 1 can stabilize if backend supports them.
-  level_shift: 0.0 # Denominator level shift (Eh). Small positive values can stabilize difficult cases.
-  newton_krylov: false # Whether to switch to Newton-Krylov style updates if the backend supports it.
+  code: hast_ucc
+  # Record-only on the active-space FCIDUMP route. This value is ignored
+  # numerically; the active-space Hamiltonian still comes from `tzp-dkh`.
+  basis_set: cc-pVDZ
+  n_final: 5
+  conv_tol: 1.0e-08
+  residual_tol: 1.0e-06
+  max_cycle: 2000
+  lambda_max_cycle: 500
+  diis_space: 6
+  diis_start_cycle: 0
+  iterative_damping: 1.0
+  level_shift: 0.0
+  newton_krylov: false
 
 dmrg_basis:
-  # Controls for step7 orbital preparation:
-  # UCCSD natural orbitals -> localization -> alpha/beta pairing -> ordering.
-  # step7 still depends on the original APEX_CAS orbital/chkfile basis provenance
-  # (for example `tzp-dkh`) through `cas_data.h5` and the SCF chkfile, not through a
-  # separate `basis_set` field here.
-  localization_method: pm # Orbital localization method. Common choices: `pm` (Pipek-Mezey), `boys`.
-
-  cc_conv_tol: 1.0e-08 # UCCSD convergence threshold used to generate the 1-RDM / natural orbitals.
-  cc_max_cycle: 2000 # Maximum UCCSD iterations for the NO construction stage.
-  cc_diis_space: 12 # UCCSD DIIS history size during NO generation.
-  cc_direct: false # Whether to prefer direct CC tensor contractions (backend/performance dependent).
-
-  pm_pop_method: mulliken # Population analysis used inside Pipek-Mezey localization. Common values: `mulliken`, `lowdin`, `meta_lowdin` (backend dependent).
-  pm_conv_tol: 1.0e-08 # Pipek-Mezey localization convergence threshold.
-  pm_conv_tol_grad: null # Optional PM gradient threshold override. `null` = backend default.
-  pm_max_cycle: 100 # Maximum Pipek-Mezey localization iterations.
-
-  boys_conv_tol: 1.0e-08 # Boys localization convergence threshold.
-  boys_conv_tol_grad: null # Optional Boys gradient threshold override. `null` = backend default.
-  boys_max_cycle: 100 # Maximum Boys localization iterations.
-
-  ordering_matrix_mode: exchange_proxy # Orbital-ordering metric. Current common values: `exchange_proxy`, `overlap_proxy`.
-  exchange_proxy_max_orbitals: 64 # Cutoff used when building exchange-proxy ordering matrices for larger active spaces.
-
-  ga_generations: 100 # Generations for GA orbital ordering. Larger values search more thoroughly but cost more.
-  ga_population: 50 # Population size for GA ordering.
-  ga_mutation_rate: 0.1 # Mutation probability for GA ordering. Typical range 0.05-0.2.
-  ga_seed: 17 # Random seed for reproducible GA ordering.
+  localization_method: pm
+  cc_conv_tol: 1.0e-08
+  cc_max_cycle: 2000
+  cc_diis_space: 12
+  cc_direct: false
+  pm_pop_method: Mulliken
+  pm_conv_tol: 1.0e-08
+  pm_conv_tol_grad: null
+  pm_max_cycle: 100
+  pm_exponent: 2
+  pm_init_guess: atomic
+  boys_conv_tol: 1.0e-08
+  boys_conv_tol_grad: null
+  boys_max_cycle: 100
+  ordering_matrix_mode: exchange_proxy
+  exchange_proxy_max_orbitals: 64
+  ga_generations: 100
+  ga_population: 50
+  ga_mutation_rate: 0.1
+  ga_seed: 17
 
 dmrg:
-  # Controls for step8 active-space DMRG.
-  # The important distinction is backend + basis + schedule:
-  # - `pyscf_dmrgci_sz + original_identity + benchmark` is the current reference path for benchmark reproduction.
-  # - `pyblock2_sz + step7_paired + workflow` is the more flexible workflow path.
-  backend: pyblock2_sz # DMRG backend. Current choices: `pyblock2_sz`, `pyscf_dmrgci_sz`.
-  basis_mode: step7_paired # Active-space basis fed into DMRG. Choices: `step7_paired`, `original_identity`.
-  schedule_mode: workflow # High-level schedule profile. Choices: `workflow` (lighter) or `benchmark` (DMRGCI-like).
-
+  backend: pyscf_dmrgci_sz
+  basis_mode: original_identity
+  schedule_mode: benchmark
   bond_dims:
-    - 500 # Maximum MPS bond dimensions to run. Multiple values enable finite-M scans / extrapolation.
+    # Chan 2026 Fe2S2 oxidized benchmark coverage:
+    # UDMRG Table 7: 100, 200, 400, 600, 800, 1000, 1200, 1600, 2000, 2400
+    # SA-DMRG Table 5 also reports D=12000 ("12k"), but that point is
+    # intentionally omitted from the local session controls because it is too
+    # expensive for this workstation.
+    - 100
+    - 200
+    - 400
+    - 600
+    - 800
     - 1000
-  n_sweeps: 8 # Total sweeps per bond dimension. Increase if tail convergence is still improving.
-  convergence_tol: 1.0e-08 # Final DMRG convergence tolerance target used by schedule builders.
-  n_threads: 4 # CPU threads for DMRG backend.
-  stack_mem: 2147483648 # Stack / tensor memory budget in bytes. Increase for larger systems or larger M.
-
-  twosite_to_onesite: null # pyblock2 only. Sweep index where 2-site DMRG switches to 1-site DMRG; `null` = inferred/default path.
-  dav_max_iter: null # pyblock2 only. Maximum Davidson iterations for each local eigenproblem.
-  dav_def_max_size: null # pyblock2 only. Davidson deflation/Krylov subspace size. Common values: 30, 50, 80.
-  dav_rel_conv_thrd: null # pyblock2 only. Relative Davidson residual threshold. Keep `0.0` for strict benchmark runs.
-  dav_type: null # pyblock2 only. Davidson variant string; examples tested include `Normal`, `DavidsonPrecond`, `NoPrecond`.
+    - 1200
+    - 1600
+    - 2000
+    - 2400
+  n_sweeps: 30
+  convergence_tol: 1.0e-08
+  n_threads: 4
+  stack_mem: 2147483648
+  twosite_to_onesite: null
+  dav_max_iter: null
+  dav_def_max_size: null
+  dav_rel_conv_thrd: null
+  dav_type: null
 
 fno_uccsdtq:
   freeze_occ:
-    - 2 # Occupied-orbital freezing choices for FNO-UCCSDTQ scans. Each value defines one separate run.
+    - 2
     - 4
     - 6

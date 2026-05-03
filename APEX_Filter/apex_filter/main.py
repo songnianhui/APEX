@@ -1,281 +1,297 @@
-"""APEX_Filter — CLI Entry Point
+"""APEX_Filter CLI for the staged V1.0.0 workflow."""
 
-Orchestrates the filtering pipeline:
-  1. Parse structure → ClusterInfo (via apex_cas)
-  2. Build active space → CAS (via apex_cas)
-  3. Enumerate spin isomers → list[SpinIsomer]
-  4. Enumerate electronic configs → list[ElectronicConfig]
-  5. Design filtering funnel → FilteringPlan
-  6. Generate input files
-  7. Generate FCIDUMP
-"""
+from __future__ import annotations
 
 import argparse
-import os
-import sys
-from itertools import product
+from typing import Any
 
-import numpy as np
+import yaml
 
-from .models import (
-    CAS,
-    ActiveSpaceLevel,
-    ClusterInfo,
-    ExtrapolatedEnergy,
-    ComputationSettings,
-    MetalCenter,
-)
+from .steps_dmrg import step_dmrg, step_extrapolate_dmrg
+from .steps_dmrg_basis import step_dmrg_basis
+from .steps_enumeration import step_enumerate
+from .steps_fno import step_cc_composite, step_fno_uccsdtq
+from .steps_reference_uhf import step_uhf
+from .steps_report import step_report
+from .steps_setup import step_load
+from .steps_ucc import step_ccsd, step_ccsd_t, step_ccsdt
+
+
+def _parse_csv_ints(value: str) -> list[int]:
+    parts = [part.strip() for part in str(value).split(",") if part.strip()]
+    if not parts:
+        raise argparse.ArgumentTypeError("Expected a comma-separated list of integers.")
+    try:
+        return [int(part) for part in parts]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Invalid integer list '{value}'. Expected e.g. '500,1000,1500'."
+        ) from exc
+
+
+def _parse_yaml_value(value: str) -> Any:
+    try:
+        return yaml.safe_load(value)
+    except Exception as exc:
+        raise argparse.ArgumentTypeError(f"Could not parse value '{value}' as YAML/JSON.") from exc
+
+
+def _add_session_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--session", required=True, help="Path to the filter session directory.")
+
+
+def _add_pick_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--pick",
+        default="all",
+        help='Selection strategy, e.g. "all", "labels A,B", or "file /path/to/selection_worklist.csv".',
+    )
 
 
 def create_parser():
     """Create the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="apex-filter",
-        description="APEX_Filter — Electronic Structure Filtering Pipeline for transition metal clusters",
+        description="APEX_Filter staged electronic-structure workflow",
     )
-
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # spin-only command (fast, no structure parsing)
-    spin_cmd = subparsers.add_parser("spin", help="Spin isomer enumeration only")
-    spin_cmd.add_argument("--metals", nargs="+", required=True,
-                           help="Metal elements, e.g., Fe Fe Fe Fe Fe Fe Fe Mo")
-    spin_cmd.add_argument("--spin", type=float, required=True,
-                           help="Target total Sz")
-    spin_cmd.add_argument("--oxidation", nargs="+", type=int, default=None,
-                           help="Oxidation states for each metal")
-    spin_cmd.add_argument("--symmetry", default="C1", help="Symmetry group")
+    load_cmd = subparsers.add_parser("load", help="Initialize a filter session from filter settings.")
+    load_cmd.add_argument("--config", required=True, help="Path to the filter settings YAML.")
+    _add_session_arg(load_cmd)
 
-    # filter command
-    filter_cmd = subparsers.add_parser("filter", help="Design filtering funnel")
-    filter_cmd.add_argument("--n-configs", type=int, required=True,
-                             help="Total number of configurations")
-    filter_cmd.add_argument("--n-electrons", type=int, required=True,
-                             help="Active space electrons")
-    filter_cmd.add_argument("--n-orbitals", type=int, required=True,
-                             help="Active space orbitals")
-    filter_cmd.add_argument("--n-isomers", type=int, default=None,
-                             help="Number of spin isomers")
-    filter_cmd.add_argument("--style", choices=["femoco", "conservative", "minimal"],
-                             default="femoco", help="Filtering funnel style")
+    enumerate_cmd = subparsers.add_parser("enumerate", help="Enumerate electronic configurations.")
+    _add_session_arg(enumerate_cmd)
+    enumerate_cmd.add_argument("--target-sz", type=float, default=None, help="Override target Sz.")
+    enumerate_cmd.add_argument(
+        "--forced-oxidation",
+        type=_parse_yaml_value,
+        default=None,
+        help="Optional YAML/JSON oxidation constraint mapping.",
+    )
+    enumerate_cmd.add_argument("--max-configs", type=int, default=None, help="Limit the number of raw configs.")
 
-    # fcidump command
-    fcicmd = subparsers.add_parser("fcidump",
-                                    help="Generate FCIDUMP from pipeline results")
-    fcicmd.add_argument("structure", help="Path to structure file (XYZ/PDB)")
-    fcicmd.add_argument("--charge", type=int, default=0, help="Total charge")
-    fcicmd.add_argument("--spin", type=float, default=0.0, help="Target spin S")
-    fcicmd.add_argument("--basis", default="cc-pVDZ", help="Basis set")
-    fcicmd.add_argument("--uhf-npz", default=None,
-                         help="Path to UHF *_uhf.npz (skips SCF if provided)")
-    fcicmd.add_argument("--dmrg-npz", default=None,
-                         help="Path to DMRG *_dmrg_results.npz (for ncore/cas info)")
-    fcicmd.add_argument("--pipeline-dir", default=None,
-                         help="Pipeline output dir to auto-locate NPZ files")
-    fcicmd.add_argument("--active-electrons", type=int, default=None,
-                         help="Active space electrons (if no DMRG NPZ)")
-    fcicmd.add_argument("--active-orbitals", type=int, default=None,
-                         help="Active space orbitals (if no DMRG NPZ)")
-    fcicmd.add_argument("--mode", choices=["both", "full", "active"],
-                         default="both", help="FCIDUMP mode")
-    fcicmd.add_argument("--output", "-o", default=None,
-                         help="Output directory (default: {structure_dir}/fcidump/)")
+    uhf_cmd = subparsers.add_parser("uhf", help="Run reference active-space UHF.")
+    _add_session_arg(uhf_cmd)
+    _add_pick_arg(uhf_cmd)
+    uhf_cmd.add_argument("--conv-tol", type=float, default=1e-8)
+    uhf_cmd.add_argument("--max-cycle", type=int, default=2000)
+    uhf_cmd.add_argument("--stabilize-cycles", type=int, default=20)
+    uhf_cmd.add_argument("--level-shift", type=float, default=0.3)
+    uhf_cmd.add_argument("--damp", type=float, default=0.2)
+    uhf_cmd.add_argument("--newton-refine", action="store_true")
+    uhf_cmd.add_argument("--newton-max-cycle", type=int, default=8)
+
+    ccsd_cmd = subparsers.add_parser("ccsd", help="Run active-space UCCSD.")
+    _add_session_arg(ccsd_cmd)
+    _add_pick_arg(ccsd_cmd)
+    ccsd_cmd.add_argument("--code", choices=["pyscf"], default="pyscf")
+    ccsd_cmd.add_argument("--basis-set", default="cc-pVDZ")
+
+    ccsd_t_cmd = subparsers.add_parser("ccsd-t", help="Run active-space UCCSD(T).")
+    _add_session_arg(ccsd_t_cmd)
+    _add_pick_arg(ccsd_t_cmd)
+    ccsd_t_cmd.add_argument("--code", choices=["pyscf"], default="pyscf")
+    ccsd_t_cmd.add_argument("--basis-set", default="cc-pVDZ")
+    ccsd_t_cmd.add_argument("--n-final", type=int, default=5)
+
+    ccsdt_cmd = subparsers.add_parser("ccsdt", help="Run active-space UCCSDT.")
+    _add_session_arg(ccsdt_cmd)
+    _add_pick_arg(ccsdt_cmd)
+    ccsdt_cmd.add_argument("--code", choices=["hast_ucc"], default="hast_ucc")
+    ccsdt_cmd.add_argument("--basis-set", default="cc-pVDZ")
+    ccsdt_cmd.add_argument("--n-final", type=int, default=5)
+    ccsdt_cmd.add_argument("--conv-tol", type=float, default=1e-8)
+    ccsdt_cmd.add_argument("--residual-tol", type=float, default=1e-6)
+    ccsdt_cmd.add_argument("--max-cycle", type=int, default=2000)
+    ccsdt_cmd.add_argument("--lambda-max-cycle", type=int, default=500)
+    ccsdt_cmd.add_argument("--diis-space", type=int, default=6)
+    ccsdt_cmd.add_argument("--diis-start-cycle", type=int, default=0)
+    ccsdt_cmd.add_argument("--iterative-damping", type=float, default=1.0)
+    ccsdt_cmd.add_argument("--level-shift", type=float, default=0.0)
+    ccsdt_cmd.add_argument("--newton-krylov", action="store_true")
+
+    dmrg_basis_cmd = subparsers.add_parser("dmrg-basis", help="Prepare orbital bases for DMRG.")
+    _add_session_arg(dmrg_basis_cmd)
+    _add_pick_arg(dmrg_basis_cmd)
+    dmrg_basis_cmd.add_argument("--localization-method", default="pm")
+    dmrg_basis_cmd.add_argument("--cc-conv-tol", type=float, default=1e-8)
+    dmrg_basis_cmd.add_argument("--cc-max-cycle", type=int, default=2000)
+    dmrg_basis_cmd.add_argument("--cc-diis-space", type=int, default=12)
+    dmrg_basis_cmd.add_argument("--cc-direct", action="store_true")
+    dmrg_basis_cmd.add_argument("--pm-pop-method", default="mulliken")
+    dmrg_basis_cmd.add_argument("--pm-conv-tol", type=float, default=1e-6)
+    dmrg_basis_cmd.add_argument("--pm-conv-tol-grad", type=float, default=None)
+    dmrg_basis_cmd.add_argument("--pm-max-cycle", type=int, default=100)
+    dmrg_basis_cmd.add_argument("--pm-exponent", type=int, default=2)
+    dmrg_basis_cmd.add_argument("--pm-init-guess", default="atomic")
+    dmrg_basis_cmd.add_argument("--boys-conv-tol", type=float, default=1e-6)
+    dmrg_basis_cmd.add_argument("--boys-conv-tol-grad", type=float, default=None)
+    dmrg_basis_cmd.add_argument("--boys-max-cycle", type=int, default=100)
+    dmrg_basis_cmd.add_argument("--ordering-matrix-mode", default="exchange_proxy")
+    dmrg_basis_cmd.add_argument("--exchange-proxy-max-orbitals", type=int, default=64)
+    dmrg_basis_cmd.add_argument("--ga-generations", type=int, default=100)
+    dmrg_basis_cmd.add_argument("--ga-population", type=int, default=50)
+    dmrg_basis_cmd.add_argument("--ga-mutation-rate", type=float, default=0.1)
+    dmrg_basis_cmd.add_argument("--ga-seed", type=int, default=17)
+
+    dmrg_cmd = subparsers.add_parser("dmrg", help="Run active-space DMRG.")
+    _add_session_arg(dmrg_cmd)
+    _add_pick_arg(dmrg_cmd)
+    dmrg_cmd.add_argument("--backend", default="pyblock2_sz")
+    dmrg_cmd.add_argument("--basis-mode", default="step7_paired")
+    dmrg_cmd.add_argument("--schedule-mode", default="workflow")
+    dmrg_cmd.add_argument("--bond-dims", type=_parse_csv_ints, default=None)
+    dmrg_cmd.add_argument("--n-sweeps", type=int, default=8)
+    dmrg_cmd.add_argument("--convergence-tol", type=float, default=1e-8)
+    dmrg_cmd.add_argument("--n-threads", type=int, default=4)
+    dmrg_cmd.add_argument("--stack-mem", type=int, default=2 * 1024**3)
+    dmrg_cmd.add_argument("--twosite-to-onesite", type=int, default=None)
+    dmrg_cmd.add_argument("--dav-max-iter", type=int, default=None)
+    dmrg_cmd.add_argument("--dav-def-max-size", type=int, default=None)
+    dmrg_cmd.add_argument("--dav-rel-conv-thrd", type=float, default=None)
+    dmrg_cmd.add_argument("--dav-type", default=None)
+
+    extrapolate_cmd = subparsers.add_parser("extrapolate", help="Extrapolate DMRG energies.")
+    _add_session_arg(extrapolate_cmd)
+
+    report_cmd = subparsers.add_parser("report", help="Build the final ranked report.")
+    _add_session_arg(report_cmd)
+
+    fno_cmd = subparsers.add_parser("fno-uccsdtq", help="Run occupied-NO-freeze UCCSDT/UCCSDTQ.")
+    _add_session_arg(fno_cmd)
+    _add_pick_arg(fno_cmd)
+    fno_cmd.add_argument("--freeze-occ", type=_parse_csv_ints, default=None)
+
+    cc_composite_cmd = subparsers.add_parser("cc-composite", help="Build composite CC energies.")
+    _add_session_arg(cc_composite_cmd)
 
     return parser
 
 
-def run_spin(args):
-    """Run spin isomer enumeration only (no structure file needed)."""
-    from .models import MetalCenter, ClusterInfo
-    from .spin_config import enumerate_spin_isomers
-    from apex_cas.CAS_builder_noncomputing import get_local_spin, get_common_oxidation_states
-
-    # Build minimal ClusterInfo
-    metals = []
-    for i, elem in enumerate(args.metals):
-        metals.append(MetalCenter(
-            element=elem,
-            index=i,
-            position=np.zeros(3),
-            label=f"{elem}{i + 1}",
-        ))
-
-    cluster_info = ClusterInfo(
-        metals=metals,
-        target_spin=args.spin,
-        symmetry_group=args.symmetry,
-    )
-
-    # Determine oxidation states
-    ox_states = {}
-    if args.oxidation:
-        for i, ox in enumerate(args.oxidation):
-            ox_states[i] = ox
-    else:
-        for i, elem in enumerate(args.metals):
-            states = get_common_oxidation_states(elem)
-            ox_states[i] = states[0] if states else 2
-
-    # Enumerate
-    isomers = enumerate_spin_isomers(cluster_info, oxidation_states=ox_states)
-
-    print(f"Metals: {' '.join(args.metals)}")
-    print(f"Target Sz = {args.spin}")
-    print(f"Oxidation states: {ox_states}")
-    print(f"\nLocal spins:")
-    for i, metal in enumerate(metals):
-        S = get_local_spin(metal.element, ox_states[i])
-        print(f"  {metal.label}: oxidation={ox_states[i]:+d}, S={S}")
-    print(f"\nTotal spin isomers: {len(isomers)}")
-
-    # Group by n_minority
-    from collections import Counter
-    n_minority_counts = Counter(iso.n_minority for iso in isomers)
-    print("\nBy number of minority-spin metals:")
-    for n in sorted(n_minority_counts):
-        print(f"  BS{n}: {n_minority_counts[n]} isomer(s)")
-
-    # Print first few
-    print("\nFirst 10 isomers:")
-    for iso in isomers[:10]:
-        minority = [k + 1 for k, v in iso.spin_assignment.items() if v == -1]
-        print(f"  {iso.label}: minority at sites {minority}")
-
-
-def run_filter(args):
-    """Design a filtering funnel."""
-    from .filtering import design_filtering_funnel
-    from .models import CAS
-
-    active_space = CAS(
-        n_electrons=args.n_electrons,
-        n_orbitals=args.n_orbitals,
-    )
-
-    plan = design_filtering_funnel(
-        args.n_configs, active_space, args.n_isomers, style=args.style
-    )
-
-    print(f"Filtering funnel for ({args.n_electrons}e, {args.n_orbitals}o):")
-    print(f"Total configurations: {plan.total_configs}")
-    print()
-    for level in plan.levels:
-        print(f"  {level.method:>10}: {level.n_input:>8} → {level.n_output:>8}"
-              f"  ({level.selection_criterion})"
-              + (f"  {level.n_per_isomer}/isomer" if level.n_per_isomer else ""))
-    print(f"\nFinal: {plan.levels[-1].n_output} configurations")
-
-
-def run_fcidump(args):
-    """Generate FCIDUMP files for a structure."""
-    from apex_cas.structure_analyzer import parse_structure
-    from apex_cas.CAS_builder_noncomputing import build_NC_CAS
-    from .fcidump import generate_fcidump
-
-    print(f"Generating FCIDUMP for: {args.structure}")
-    cluster_info = parse_structure(args.structure, args.charge, args.spin)
-    cases, _ = build_NC_CAS(cluster_info)
-    active_space = cases["rule"]
-
-    # Determine output directory
-    if args.output:
-        output_dir = args.output
-    else:
-        struct_dir = os.path.dirname(os.path.abspath(args.structure))
-        output_dir = os.path.join(struct_dir, "fcidump")
-
-    # Try to auto-locate NPZ files from pipeline directory
-    uhf_npz = args.uhf_npz
-    dmrg_npz = args.dmrg_npz
-
-    if args.pipeline_dir and (uhf_npz is None or dmrg_npz is None):
-        import glob as glob_mod
-        # Find UHF NPZ
-        if uhf_npz is None:
-            uhf_files = glob_mod.glob(os.path.join(args.pipeline_dir,
-                                                     "level_*_UHF", "*_uhf.npz"))
-            if uhf_files:
-                uhf_npz = uhf_files[0]
-                print(f"  Auto-located UHF NPZ: {uhf_npz}")
-
-        # Find last DMRG NPZ
-        if dmrg_npz is None:
-            dmrg_files = sorted(glob_mod.glob(os.path.join(args.pipeline_dir,
-                                                            "level_*_DMRG",
-                                                            "*_dmrg_results.npz")))
-            if dmrg_files:
-                dmrg_npz = dmrg_files[-1]
-                print(f"  Auto-located DMRG NPZ: {dmrg_npz}")
-
-    # Override active space if manually specified
-    if args.active_electrons is not None and args.active_orbitals is not None:
-        active_space.n_electrons = args.active_electrons
-        active_space.n_orbitals = args.active_orbitals
-
-    print(f"  Active space: ({active_space.n_electrons}e, {active_space.n_orbitals}o)")
-    print(f"  Mode: {args.mode}")
-    print(f"  Output: {output_dir}/")
-
-    if uhf_npz is None:
-        print("\n  No UHF NPZ provided. Running UHF calculation from scratch...")
-        from .input_generator import generate_input
-        # Run a quick UHF to get MO coefficients
-        from pyscf import gto, scf
-        import numpy as np
-        geometry_lines = []
-        for elem, pos in zip(cluster_info.all_elements, cluster_info.all_positions):
-            geometry_lines.append(f"{elem} {pos[0]:.8f} {pos[1]:.8f} {pos[2]:.8f}")
-        geometry = "\n".join(geometry_lines)
-        mol = gto.M(atom=geometry, basis=args.basis,
-                     charge=args.charge, spin=int(round(2 * args.spin)),
-                     verbose=0, symmetry=False)
-        mf = scf.UHF(mol)
-        mf.max_cycle = 2000
-        mf.kernel()
-
-        # Save temporary UHF NPZ
-        tmp_dir = os.path.join(output_dir, "_tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
-        tmp_npz = os.path.join(tmp_dir, "uhf.npz")
-        np.savez(tmp_npz,
-                 energy=mf.e_tot, converged=mf.converged,
-                 mo_coeff_a=mf.mo_coeff[0], mo_coeff_b=mf.mo_coeff[1],
-                 mo_occ_a=mf.mo_occ[0], mo_occ_b=mf.mo_occ[1],
-                 mo_energy_a=mf.mo_energy[0], mo_energy_b=mf.mo_energy[1])
-        uhf_npz = tmp_npz
-
-    info = generate_fcidump(
-        cluster_info, active_space, uhf_npz, output_dir,
-        dmrg_npz=dmrg_npz, basis_set=args.basis,
-        mode=args.mode,
-    )
-    print(f"\nFCIDUMP generation complete:")
-    if "full_space" in info:
-        print(f"  Full-space: {info['full_space']}")
-    if "active_space" in info:
-        print(f"  Active-space: {info['active_space']}")
+def _dispatch(args: argparse.Namespace) -> None:
+    if args.command == "load":
+        step_load(args.config, args.session)
+        return
+    if args.command == "enumerate":
+        step_enumerate(
+            args.session,
+            target_Sz=args.target_sz,
+            forced_oxidation=args.forced_oxidation,
+            max_configs=args.max_configs,
+        )
+        return
+    if args.command == "uhf":
+        step_uhf(
+            args.session,
+            pick=args.pick,
+            conv_tol=args.conv_tol,
+            max_cycle=args.max_cycle,
+            stabilize_cycles=args.stabilize_cycles,
+            level_shift=args.level_shift,
+            damp=args.damp,
+            newton_refine=args.newton_refine,
+            newton_max_cycle=args.newton_max_cycle,
+        )
+        return
+    if args.command == "ccsd":
+        step_ccsd(args.session, pick=args.pick, code=args.code, basis_set=args.basis_set)
+        return
+    if args.command == "ccsd-t":
+        step_ccsd_t(
+            args.session,
+            pick=args.pick,
+            code=args.code,
+            basis_set=args.basis_set,
+            n_final=args.n_final,
+        )
+        return
+    if args.command == "ccsdt":
+        step_ccsdt(
+            args.session,
+            pick=args.pick,
+            code=args.code,
+            basis_set=args.basis_set,
+            n_final=args.n_final,
+            conv_tol=args.conv_tol,
+            residual_tol=args.residual_tol,
+            max_cycle=args.max_cycle,
+            lambda_max_cycle=args.lambda_max_cycle,
+            diis_space=args.diis_space,
+            diis_start_cycle=args.diis_start_cycle,
+            iterative_damping=args.iterative_damping,
+            level_shift=args.level_shift,
+            newton_krylov=args.newton_krylov,
+        )
+        return
+    if args.command == "dmrg-basis":
+        step_dmrg_basis(
+            args.session,
+            pick=args.pick,
+            localization_method=args.localization_method,
+            cc_conv_tol=args.cc_conv_tol,
+            cc_max_cycle=args.cc_max_cycle,
+            cc_diis_space=args.cc_diis_space,
+            cc_direct=args.cc_direct,
+            pm_pop_method=args.pm_pop_method,
+            pm_conv_tol=args.pm_conv_tol,
+            pm_conv_tol_grad=args.pm_conv_tol_grad,
+            pm_max_cycle=args.pm_max_cycle,
+            pm_exponent=args.pm_exponent,
+            pm_init_guess=args.pm_init_guess,
+            boys_conv_tol=args.boys_conv_tol,
+            boys_conv_tol_grad=args.boys_conv_tol_grad,
+            boys_max_cycle=args.boys_max_cycle,
+            ordering_matrix_mode=args.ordering_matrix_mode,
+            exchange_proxy_max_orbitals=args.exchange_proxy_max_orbitals,
+            ga_generations=args.ga_generations,
+            ga_population=args.ga_population,
+            ga_mutation_rate=args.ga_mutation_rate,
+            ga_seed=args.ga_seed,
+        )
+        return
+    if args.command == "dmrg":
+        step_dmrg(
+            args.session,
+            pick=args.pick,
+            backend=args.backend,
+            basis_mode=args.basis_mode,
+            schedule_mode=args.schedule_mode,
+            bond_dims=args.bond_dims,
+            n_sweeps=args.n_sweeps,
+            convergence_tol=args.convergence_tol,
+            n_threads=args.n_threads,
+            stack_mem=args.stack_mem,
+            twosite_to_onesite=args.twosite_to_onesite,
+            dav_max_iter=args.dav_max_iter,
+            dav_def_max_size=args.dav_def_max_size,
+            dav_rel_conv_thrd=args.dav_rel_conv_thrd,
+            dav_type=args.dav_type,
+        )
+        return
+    if args.command == "extrapolate":
+        step_extrapolate_dmrg(args.session)
+        return
+    if args.command == "report":
+        step_report(args.session)
+        return
+    if args.command == "fno-uccsdtq":
+        step_fno_uccsdtq(args.session, pick=args.pick, freeze_occ=args.freeze_occ)
+        return
+    if args.command == "cc-composite":
+        step_cc_composite(args.session)
+        return
+    raise ValueError(f"Unsupported command: {args.command}")
 
 
 def main():
     """Main entry point."""
     parser = create_parser()
     args = parser.parse_args()
-
     if args.command is None:
         parser.print_help()
         return
-
-    commands = {
-        "spin": run_spin,
-        "filter": run_filter,
-        "fcidump": run_fcidump,
-    }
-
-    cmd = commands.get(args.command)
-    if cmd:
-        cmd(args)
-    else:
-        parser.print_help()
+    _dispatch(args)
 
 
 if __name__ == "__main__":

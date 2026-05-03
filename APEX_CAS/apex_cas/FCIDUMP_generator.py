@@ -13,24 +13,34 @@ Key design points:
     (Hartree–Fock) contribution.
 """
 
+import json
 import logging
 import os
 
 import numpy as np
+from pyscf import ao2mo
+from pyscf.mcscf import casci as casci_mod
+from pyscf.tools import fcidump as fcidump_mod
+from shared import comparison as comparison_module
 
 logger = logging.getLogger(__name__)
 
+def compare_fcidumps(*args, **kwargs):
+    """Benchmark-facing thin wrapper over the shared FCIDUMP comparator."""
+    return comparison_module.compare_fcidumps(*args, **kwargs)
+
 
 # ──────────────────────────────────────────────────────────────────
-# Public API
+# Public comparison utilities and internal workflow primitives
 # ──────────────────────────────────────────────────────────────────
 
-def transform_active_integrals(
+def _transform_active_integrals(
     mol,
     mf,
     mo_active: np.ndarray,
     n_electrons: int,
     target_spin: float = 0.0,
+    core_dm: np.ndarray = None,
 ) -> dict:
     """Transform AO integrals to an active-space MO basis.
 
@@ -46,15 +56,20 @@ def transform_active_integrals(
     n_electrons : int
         Number of active electrons.
     target_spin : float
-        Target spin *S* (e.g. 1.5 for S = 3/2).  Used to set MS2.
+        Spin projection Sz (e.g. 0.0 for Sz=0, 1.5 for Sz=3/2).
+        Converted to MS2 = 2*Sz for FCIDUMP header and CASCI (nalpha, nbeta).
+    core_dm : ndarray (nao, nao) or None
+        Frozen-core density matrix in AO basis. When the active orbitals
+        are in a different basis than SCF (e.g. UNO / localized), this must
+        be provided to ensure the frozen core is orthogonal to the active
+        space. If None, the SCF doubly-occupied density is used (correct
+        only when active orbitals are a subset of SCF MOs).
 
     Returns
     -------
     dict
         ``{"h1e", "eri", "ecore", "n_active", "n_electrons", "ms2", "ncore"}``
     """
-    from pyscf import ao2mo
-
     n_active = mo_active.shape[1]
     ms2 = int(round(2 * target_spin))
 
@@ -62,14 +77,13 @@ def transform_active_integrals(
 
     # ── 1-electron integrals ──────────────────────────────────────
     hcore = mf.get_hcore()
-    h1e = mo_active.T @ hcore @ mo_active
+    ecore, ncore, V_core = _compute_core_energy(mol, mf, hcore, core_dm=core_dm)
+    h1e = mo_active.T @ (hcore + V_core) @ mo_active
     h1e = (h1e + h1e.T) / 2  # enforce exact symmetry
 
     # ── 2-electron integrals ──────────────────────────────────────
     eri = ao2mo.kernel(mol, mo_active, verbose=0)
-
-    # ── Core energy ───────────────────────────────────────────────
-    ecore, ncore = _compute_core_energy(mol, mf, hcore)
+    eri = ao2mo.restore(8, eri, n_active)
 
     logger.info("  ncore=%d, ecore=%.12f", ncore, ecore)
     logger.info("  h1e shape=%s, eri shape=%s", h1e.shape, eri.shape)
@@ -85,7 +99,7 @@ def transform_active_integrals(
     }
 
 
-def write_fcidump(
+def _write_fcidump(
     integrals: dict,
     output_path: str,
     orbsym: list[int] = None,
@@ -96,7 +110,7 @@ def write_fcidump(
     Parameters
     ----------
     integrals : dict
-        Output of :func:`transform_active_integrals`.
+        Output of :func:`_transform_active_integrals`.
     output_path : str
     orbsym : list[int], optional
         Orbital symmetry labels (Molpro convention).  Defaults to all-1 (C1).
@@ -110,8 +124,6 @@ def write_fcidump(
     str
         Absolute path of the written file.
     """
-    from pyscf.tools import fcidump as fcidump_mod
-
     n_active = integrals["n_active"]
     if orbsym is None:
         orbsym = [1] * n_active  # C1 symmetry
@@ -144,71 +156,7 @@ def write_fcidump(
     return os.path.abspath(output_path)
 
 
-def compare_fcidumps(
-    path_ref: str,
-    path_new: str,
-    h1e_tol: float = 1e-4,
-    ecore_tol: float = 1e-6,
-) -> dict:
-    """Compare two FCIDUMP files.
-
-    Parameters
-    ----------
-    path_ref, path_new : str
-    h1e_tol : float
-        Tolerance for h1e Frobenius norm difference.
-    ecore_tol : float
-        Tolerance for ecore absolute difference.
-
-    Returns
-    -------
-    dict
-        ``{"h1e_frobenius", "h1e_max", "h2e_rms", "h2e_max",
-          "ecore_ref", "ecore_new", "ecore_diff", "match"}``
-    """
-    from pyscf.tools import fcidump as fcidump_mod
-
-    ref = fcidump_mod.read(path_ref, verbose=False)
-    new = fcidump_mod.read(path_new, verbose=False)
-
-    h1_ref, h1_new = ref["H1"], new["H1"]
-    dh1 = h1_new - h1_ref
-    h1_frob = float(np.linalg.norm(dh1))
-    h1_max = float(np.max(np.abs(dh1)))
-
-    h2_rms = 0.0
-    h2_max = 0.0
-    h2_ref, h2_new = ref["H2"], new["H2"]
-    if h2_ref.shape == h2_new.shape:
-        dh2 = h2_new - h2_ref
-        h2_rms = float(np.sqrt(np.mean(dh2 ** 2)))
-        h2_max = float(np.max(np.abs(dh2)))
-
-    ecore_ref = float(ref["ECORE"])
-    ecore_new = float(new["ECORE"])
-    ecore_diff = ecore_new - ecore_ref
-
-    result = {
-        "h1e_frobenius": h1_frob,
-        "h1e_max": h1_max,
-        "h2e_rms": h2_rms,
-        "h2e_max": h2_max,
-        "ecore_ref": ecore_ref,
-        "ecore_new": ecore_new,
-        "ecore_diff": ecore_diff,
-        "match": h1_frob < h1e_tol and abs(ecore_diff) < ecore_tol,
-    }
-
-    logger.info("FCIDUMP comparison:")
-    logger.info("  h1e: Frobenius=%.6e, max=%.6e", h1_frob, h1_max)
-    logger.info("  h2e: RMS=%.6e, max=%.6e", h2_rms, h2_max)
-    logger.info("  ecore: ref=%.12f, new=%.12f, diff=%+.6e", ecore_ref, ecore_new, ecore_diff)
-    logger.info("  match: %s", result["match"])
-
-    return result
-
-
-def generate_fcidump_from_selection(
+def _generate_fcidump_from_selection(
     mol,
     mf,
     mo_coeff_loc: np.ndarray,
@@ -217,8 +165,15 @@ def generate_fcidump_from_selection(
     output_path: str,
     target_spin: float = 0.0,
     zero_ecore: bool = True,
+    e_solvent: float = 0.0,
+    occ_core_hi: float = 1.98,
+    frozen_core_indices: list[int] | None = None,
+    n_electrons: int | None = None,
 ) -> str:
     """One-stop: build active space from selected indices and write FCIDUMP.
+
+    Uses PySCF's CASCI machinery to fold the frozen-core potential into the
+    effective one-electron Hamiltonian for localized/UNO active spaces.
 
     Parameters
     ----------
@@ -232,8 +187,17 @@ def generate_fcidump_from_selection(
         Sorted list of selected orbital column indices.
     output_path : str
     target_spin : float
+        Spin projection Sz.
     zero_ecore : bool
         If True (default), write ECORE=0 and append E_core as a comment line.
+    e_solvent : float
+        Optional solvent correction used only for the sidecar.
+    occ_core_hi : float
+        Occupation threshold used to classify frozen core orbitals.
+    frozen_core_indices : list[int] | None
+        Explicit frozen-core indices; if None, determined from occupations.
+    n_electrons : int | None
+        Explicit active electron count; if None, derived from occupations.
 
     Returns
     -------
@@ -243,43 +207,109 @@ def generate_fcidump_from_selection(
     selected_indices = sorted(selected_indices)
     mo_active = mo_coeff_loc[:, selected_indices]
     occ_active = occupations[selected_indices]
-    n_electrons = int(round(float(np.sum(occ_active))))
+    if n_electrons is None:
+        n_electrons = int(round(float(np.sum(occ_active))))
     n_active = len(selected_indices)
+    ms2 = int(round(2 * target_spin))
+    nalpha = (n_electrons + ms2) // 2
+    nbeta = (n_electrons - ms2) // 2
+    if nalpha + nbeta != n_electrons:
+        raise ValueError(
+            f"Inconsistent electron partition: nalpha={nalpha} + nbeta={nbeta} = "
+            f"{nalpha + nbeta} != n_electrons={n_electrons}. "
+            f"Check --spin-projection (Sz={target_spin}, MS2={ms2})."
+        )
 
     print(f"  Active space: CAS({n_electrons}e, {n_active}o)")
-    print(f"  MS2 = {int(round(2 * target_spin))}")
+    print(f"  MS2 = {ms2}")
 
-    integrals = transform_active_integrals(
-        mol, mf, mo_active, n_electrons, target_spin=target_spin,
-    )
-    return write_fcidump(integrals, output_path, zero_ecore=zero_ecore)
+    selected_set = set(selected_indices)
+    if frozen_core_indices is not None:
+        frozen_core_idx = sorted(frozen_core_indices)
+    else:
+        frozen_core_idx = sorted(
+            [i for i in range(len(occupations)) if occupations[i] > occ_core_hi and i not in selected_set]
+        )
+    ncore = len(frozen_core_idx)
+    mo_frozen = mo_coeff_loc[:, frozen_core_idx]
+    n_frozen_elec = ncore * 2
+    print(f"  Frozen core: {ncore} orbitals, {n_frozen_elec} electrons (CASCI closed-shell)")
+    print(f"  Total electrons: {n_frozen_elec + n_electrons} (frozen {n_frozen_elec} + active {n_electrons})")
+
+    mo_reordered = np.hstack([mo_frozen, mo_active])
+    casci_obj = casci_mod.CASCI(mf, n_active, (nalpha, nbeta), ncore=ncore)
+    casci_obj.mo_coeff = mo_reordered
+
+    h1eff, e_core = casci_obj.get_h1eff()
+    eri = casci_obj.get_h2eff()
+    eri = ao2mo.restore(8, eri, n_active)
+
+    integrals = {
+        "h1e": h1eff,
+        "eri": eri,
+        "ecore": e_core,
+        "n_active": n_active,
+        "n_electrons": n_electrons,
+        "ms2": ms2,
+        "ncore": ncore,
+    }
+
+    fcidump_path = _write_fcidump(integrals, output_path, zero_ecore=zero_ecore)
+
+    if hasattr(mf, "with_solvent"):
+        e_solvent = float(mf.scf_summary.get("e_solvent", e_solvent))
+        logger.info("Solvent energy from mf.scf_summary: %.10f Hartree", e_solvent)
+    if abs(e_solvent) > 0 and hasattr(mf, "with_solvent"):
+        esolv_path = fcidump_path + ".esolv"
+        solv_obj = mf.with_solvent
+        _write_esolv_file(
+            esolv_path,
+            e_solvent,
+            float(mf.e_tot),
+            getattr(solv_obj, "epsilon", 4.0),
+        )
+        logger.info("Solvent sidecar written to %s", esolv_path)
+
+    return fcidump_path
 
 
 # ──────────────────────────────────────────────────────────────────
 # Internal helpers
 # ──────────────────────────────────────────────────────────────────
 
-def _compute_core_energy(mol, mf, hcore) -> tuple[float, int]:
-    """Compute core energy = E_nuc + E_core_1e + E_core_2e.
+def _write_esolv_file(esolv_path, e_solvent, e_total_scf, solvation_epsilon):
+    """Write solvent energy sidecar alongside FCIDUMP."""
+    data = {
+        "e_solvent": e_solvent,
+        "e_total_scf": e_total_scf,
+        "e_gas_phase_scf": e_total_scf - e_solvent,
+        "solvation_model": "ddCOSMO",
+        "solvation_epsilon": solvation_epsilon,
+        "note": "Add e_solvent to DMRG+ecore total energy for solvent-corrected result.",
+    }
+    with open(esolv_path, "w") as f:
+        json.dump(data, f, indent=2)
 
-    Uses the alpha MO channel for the spin-free (restricted) representation.
 
-    Returns
-    -------
-    (ecore, ncore) : tuple[float, int]
-    """
-    mo_alpha = mf.mo_coeff[0]
-    occ_alpha = mf.mo_occ[0]
-    ncore = int(np.sum(occ_alpha > 0))
-
-    # Core density matrix (doubly occupied alpha + beta → factor of 2)
-    mo_core = mo_alpha[:, :ncore]
-    core_dm = mo_core @ mo_core.T * 2
+def _compute_core_energy(mol, mf, hcore, core_dm=None) -> tuple[float, int, np.ndarray]:
+    """Compute core energy and frozen-core mean-field potential."""
+    if core_dm is None:
+        mo_alpha = mf.mo_coeff[0]
+        occ_alpha = mf.mo_occ[0]
+        occ_beta = mf.mo_occ[1]
+        n_alpha_occ = int(np.sum(occ_alpha > 0))
+        n_beta_occ = int(np.sum(occ_beta > 0))
+        ncore = min(n_alpha_occ, n_beta_occ)
+        mo_core = mo_alpha[:, :ncore]
+        core_dm = mo_core @ mo_core.T * 2
+    else:
+        ncore = -1
 
     e_nuc = mol.energy_nuc()
     e_1e = float(np.einsum("ij,ji->", hcore, core_dm))
     vj, vk = mf.get_jk(mol, core_dm)
-    e_2e = 0.5 * float(np.einsum("ij,ji->", vj * 2 - vk, core_dm))
+    corevhf = vj - 0.5 * vk
+    e_2e = 0.5 * float(np.einsum("ij,ji->", corevhf, core_dm))
     ecore = e_nuc + e_1e + e_2e
 
-    return ecore, ncore
+    return ecore, ncore, corevhf

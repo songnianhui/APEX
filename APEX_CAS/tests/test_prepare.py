@@ -208,6 +208,3 @@ class TestPrepareDraft(unittest.TestCase):
                     elements=list(ci.all_elements),
                 )
 
-
-if __name__ == "__main__":
-    unittest.main()

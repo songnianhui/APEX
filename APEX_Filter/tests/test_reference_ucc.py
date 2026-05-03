@@ -1,16 +1,14 @@
-"""Regression tests for active-space reference UCC on FCIDUMP Hamiltonians."""
+"""Regression tests for active-space reference UCC and its internal result writer."""
 
 import os
 
 import numpy as np
 import pytest
 
-from apex_filter.CAS_loader import FCIDUMPData
-from apex_filter.hdf5_state_io import save_uhf_state_h5
-from apex_filter.reference_uhf import build_fake_mol, build_reference_uhf_solver
-from apex_filter.reference_ucc import run_reference_ucc, save_reference_ucc_result
-from apex_filter.result_parser import parse_npz_result
-
+from apex_filter.hdf5_state_io import _save_uhf_state_h5
+from apex_filter.reference_ucc import _save_reference_ucc_result, run_reference_ucc
+from shared.active_space_reference import build_fake_mol, build_reference_uhf_solver
+from shared.fcidump_io import FCIDUMPData
 
 def _make_toy_fcidump():
     return FCIDUMPData(
@@ -54,7 +52,7 @@ def _write_toy_uhf_h5(tmp_path, fcidump_data):
     data = np.load(npz_path, allow_pickle=True)
     payload = {key: data[key] for key in data.files}
     h5_path = os.path.join(tmp_path, "toy_uhf.h5")
-    save_uhf_state_h5(h5_path, payload)
+    _save_uhf_state_h5(h5_path, payload)
     return h5_path, mf
 
 
@@ -102,12 +100,12 @@ def test_saved_reference_ucc_result_roundtrips_through_parser(tmp_path):
     result = run_reference_ucc(fcid, uhf_npz, run_triples=True, conv_tol=1e-10, max_cycle=50)
 
     out_npz = os.path.join(tmp_path, "toy_ccsd_t_results.npz")
-    save_reference_ucc_result(result, out_npz)
+    _save_reference_ucc_result(result, out_npz)
 
-    parsed = parse_npz_result(out_npz)
-    assert parsed["method"] == "UCCSD(T)"
-    assert parsed["energy"] == pytest.approx(-12.0)
-    assert parsed["correlation_energy"] == pytest.approx(0.0)
+    data = np.load(out_npz, allow_pickle=True)
+    assert float(data["ccsd_t_total"]) == pytest.approx(-12.0)
+    assert float(data["ccsd_corr"]) == pytest.approx(0.0)
+    assert bool(data["ccsd_converged"]) is True
 
 
 def test_save_reference_ucc_result_persists_optional_observables(tmp_path):
@@ -118,7 +116,7 @@ def test_save_reference_ucc_result_persists_optional_observables(tmp_path):
     result.post_scf_observables = {"two_sz_by_metal_label": {"Fe1": -4.2, "Fe2": 4.2}}
 
     out_npz = os.path.join(tmp_path, "toy_ccsd_results.npz")
-    save_reference_ucc_result(result, out_npz)
+    _save_reference_ucc_result(result, out_npz)
     data = np.load(out_npz, allow_pickle=True)
     assert float(data["two_s"]) == pytest.approx(3.5)
     assert float(data["two_sz_fe1"]) == pytest.approx(-4.2)

@@ -1,12 +1,18 @@
-"""Reference-UHF steps for the interactive APEX_Filter pipeline."""
+"""Step 3 reference-UHF entrypoints for the staged APEX_Filter workflow."""
 
+import json
 import logging
 import os
+from pathlib import Path as _Path
 
-from .pick import apply_pick, parse_pick_arg
-from .reference_uhf import converge_reference_uhf
-from .selection_guidance import attach_display_labels, write_selection_artifacts
-from .session import SessionManager
+from ._case_artifacts import (
+    _build_case_observable_inputs,
+)
+from .pick import _apply_pick, _parse_pick_arg
+from .post_scf_observables import analyze_step3_uhf_observables as _analyze_step3_uhf_observables
+from .reference_uhf import converge_reference_uhf as _converge_reference_uhf
+from .selection_guidance import _attach_display_labels, _write_selection_artifacts
+from .session import SessionManager as _SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +26,6 @@ _UHF_DEFAULTS = {
     "newton_refine": False,
     "newton_max_cycle": 8,
 }
-
-
 def step_uhf(
     session_dir: str,
     *,
@@ -35,7 +39,7 @@ def step_uhf(
     newton_max_cycle: int = 8,
 ):
     """Run reference-state active-space UHF for selected configurations."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step3_uhf", "step2_enumerate")
     controls = sm.resolve_method_controls(
         "uhf",
@@ -76,13 +80,13 @@ def step_uhf(
         for cfg in configs
     ]
 
-    pick_spec = parse_pick_arg(pick)
+    pick_spec = _parse_pick_arg(pick)
     if pick_spec["mode"] not in _STEP3_SUPPORTED_PICK_MODES:
         raise ValueError(
             "Step 3 runs before any energies exist, so only pick modes "
             "'all', 'labels', and 'file' are supported."
         )
-    selected_labels = apply_pick(pick_spec, summary_for_pick)
+    selected_labels = _apply_pick(pick_spec, summary_for_pick)
     label_set = set(selected_labels)
     selected_configs = [c for c in configs if c.label in label_set]
 
@@ -98,13 +102,24 @@ def step_uhf(
     if newton_refine:
         print(f"  Newton refinement: enabled (max_cycle={newton_max_cycle})")
 
-    sm.save_uhf_picked(selected_labels)
+    sm.save_step_picked("step3_uhf", selected_labels)
+    uhf_settings_payload = sm._build_step_settings_payload(
+        state.get("settings"),
+        theory="UHF",
+        conv_tol=conv_tol,
+        max_cycle=max_cycle,
+        stabilize_cycles=stabilize_cycles,
+        level_shift=level_shift,
+        damp=damp,
+        newton_refine=newton_refine,
+        newton_max_cycle=newton_max_cycle,
+    )
 
     results = []
     for i, cfg in enumerate(selected_configs):
         print(f"  [{i+1}/{len(selected_configs)}] {cfg.label} ... ", end="", flush=True)
         try:
-            scf_result = converge_reference_uhf(
+            scf_result = _converge_reference_uhf(
                 cas,
                 cfg,
                 fcid,
@@ -122,7 +137,29 @@ def step_uhf(
                 scf_result,
                 family=cfg.spin_isomer.family if cfg.spin_isomer else "",
                 state=state,
+                settings_payload=uhf_settings_payload,
             )
+            safe_label = cfg.label.replace("|", "_").replace(" ", "_")
+            step3_results_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
+            observable_path = os.path.join(step3_results_dir, f"{safe_label}_post_scf_observables.json")
+            h5_path = os.path.join(step3_results_dir, f"{safe_label}_uhf.h5")
+            observable_inputs = _build_case_observable_inputs(state, cfg)
+            observables = None
+            if observable_inputs is not None:
+                try:
+                    observables = _analyze_step3_uhf_observables(
+                        step3_h5_path=h5_path,
+                        cas_data_h5_path=observable_inputs["cas_data_h5_path"],
+                        xyz_path=observable_inputs["xyz_path"],
+                        cluster_info_path=observable_inputs["cluster_info_path"],
+                        cas_settings_path=observable_inputs["cas_settings_path"],
+                    )
+                    _Path(observable_path).write_text(
+                        json.dumps(observables, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                except Exception as exc:
+                    logger.warning("Post-SCF observable analysis failed for %s: %s", cfg.label, exc)
 
             status = "OK" if scf_result.converged else "NOT CONVERGED"
             energy_str = (
@@ -130,6 +167,7 @@ def step_uhf(
                 if scf_result.energy is not None else "N/A"
             )
             print(f"{status}  E={energy_str}  <S^2>={scf_result.s_squared:.4f}")
+            primary_two_sz = (observables or {}).get("two_sz_by_metal_label", {}) if observables else {}
 
             results.append(
                 {
@@ -141,6 +179,9 @@ def step_uhf(
                     "family": cfg.spin_isomer.family if cfg.spin_isomer else "",
                     "last_delta_e": (scf_result.diagnostics or {}).get("final_delta_e"),
                     "energy_tail": (scf_result.diagnostics or {}).get("energy_tail", []),
+                    "two_s": (observables or {}).get("two_s"),
+                    "two_sz_fe1": primary_two_sz.get("Fe1"),
+                    "two_sz_fe2": primary_two_sz.get("Fe2"),
                     "final_d_basin": (scf_result.diagnostics or {}).get("final_d_basin", {}),
                     "final_site_spin_proxy": (scf_result.diagnostics or {}).get("final_site_spin_proxy", {}),
                     "final_state_signature": (scf_result.diagnostics or {}).get("final_state_signature"),
@@ -173,10 +214,10 @@ def step_uhf(
     if energies:
         print(f"  Energy range: [{min(energies):.10f}, {max(energies):.10f}]")
 
-    results = sm.rebuild_uhf_summary(configs, current_results=results)
-    attach_display_labels(results, None)
-    sm.save_uhf_summary(results)
-    write_selection_artifacts(
+    results = sm._rebuild_uhf_summary(configs, current_results=results)
+    _attach_display_labels(results, None)
+    sm.save_step_summary("step3_uhf", "uhf_summary.json", results)
+    _write_selection_artifacts(
         os.path.join(sm.session_dir, "step3_uhf"),
         step_name="Step 3 reference UHF",
         next_step_name="ccsd",

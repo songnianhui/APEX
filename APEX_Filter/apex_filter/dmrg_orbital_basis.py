@@ -8,17 +8,19 @@ This module owns the full "DMRG basis" algorithm layer:
 - DMRG chain ordering
 
 `steps_dmrg_basis.py` should remain orchestration-only.
+Result persistence is an internal concern exposed through
+`_save_dmrg_orbital_basis(...)`; canonical callers should go through the step
+orchestrator rather than treating this module as a general artifact writer.
 """
 
 from __future__ import annotations
 
-import copy
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass as _dataclass
 
 import numpy as np
+from pyscf import cc, lo
 from shared.orbital_methods.localization import (
-    localize_orbital_block as _shared_localize_block,
     split_localize_unrestricted as _shared_split_localize_unrestricted,
 )
 from shared.orbital_methods.metadata import DMRG_BASIS_SOURCE_METHOD
@@ -26,27 +28,25 @@ from shared.orbital_methods.natural_orbitals import (
     natural_orbitals_from_dm as _shared_natural_orbitals_from_dm,
 )
 from shared.orbital_methods.ordering import (
-    chain_distance_cost,
-    compute_ordering_matrix as compute_dmrg_ordering_matrix,
-    compute_overlap_proxy_matrix,
-    fiedler_ordering,
-    genetic_algorithm_ordering,
+    chain_distance_cost as _chain_distance_cost,
+    compute_ordering_matrix as _compute_dmrg_ordering_matrix,
+    fiedler_ordering as _fiedler_ordering,
+    genetic_algorithm_ordering as _genetic_algorithm_ordering,
 )
 from shared.orbital_methods.pairing import (
-    pair_alpha_beta_orbitals,
-    pair_alpha_beta_orbitals_with_overlap,
-    reorder_beta_to_match_alpha,
+    pair_alpha_beta_orbitals as _pair_alpha_beta_orbitals,
+    reorder_beta_to_match_alpha as _reorder_beta_to_match_alpha,
 )
+from shared.reference_states import load_reference_mf_from_npz as _load_reference_mf_from_npz
+from shared.settings_payloads import extend_settings_payload as _extend_settings_payload
 
-from .models import CAS
-from .hdf5_state_io import save_dmrg_basis_h5
-from .reference_ucc import load_reference_mf_from_npz
+from .hdf5_state_io import _save_dmrg_basis_h5
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class DMRGOrbitalBasisResult:
+@_dataclass
+class _DMRGOrbitalBasisResult:
     """Prepared unrestricted orbital basis for DMRG."""
 
     mo_coeff_alpha: np.ndarray
@@ -73,7 +73,7 @@ class DMRGOrbitalBasisResult:
     fiedler_cost: float
 
 
-def build_dmrg_orbital_basis(
+def _build_dmrg_orbital_basis(
     mol,
     cas,
     fcidump_data,
@@ -88,6 +88,8 @@ def build_dmrg_orbital_basis(
     pm_conv_tol: float = 1e-6,
     pm_conv_tol_grad: float | None = None,
     pm_max_cycle: int = 100,
+    pm_exponent: int = 2,
+    pm_init_guess: str = "atomic",
     boys_conv_tol: float = 1e-6,
     boys_conv_tol_grad: float | None = None,
     boys_max_cycle: int = 100,
@@ -109,12 +111,10 @@ def build_dmrg_orbital_basis(
     5. Pair alpha/beta orbitals by overlap maximization.
     6. Reorder orbital pairs for the DMRG chain.
     """
-    from pyscf import cc, lo
-
     if cas.mo_coeff_alpha is None or cas.mo_coeff_beta is None:
         raise ValueError("CAS must include AO-space mo_coeff_alpha/beta for DMRG orbital preparation")
 
-    mf = load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
+    mf = _load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
     mycc = cc.UCCSD(mf)
     mycc.conv_tol = cc_conv_tol
     mycc.max_cycle = cc_max_cycle
@@ -124,8 +124,8 @@ def build_dmrg_orbital_basis(
 
     dm1a_mo, dm1b_mo = mycc.make_rdm1(ao_repr=False)
 
-    occ_a, rot_a = _natural_orbitals_from_dm(dm1a_mo)
-    occ_b, rot_b = _natural_orbitals_from_dm(dm1b_mo)
+    occ_a, rot_a = _shared_natural_orbitals_from_dm(dm1a_mo)
+    occ_b, rot_b = _shared_natural_orbitals_from_dm(dm1b_mo)
 
     ao_coeff_a = cas.mo_coeff_alpha @ rot_a
     ao_coeff_b = cas.mo_coeff_beta @ rot_b
@@ -133,7 +133,7 @@ def build_dmrg_orbital_basis(
     nocc_a = int(np.sum(mf.mo_occ[0] > 0))
     nocc_b = int(np.sum(mf.mo_occ[1] > 0))
 
-    loc_a = _split_localize_unrestricted(
+    loc_a = _shared_split_localize_unrestricted(
         mol,
         ao_coeff_a,
         nocc_a,
@@ -143,11 +143,13 @@ def build_dmrg_orbital_basis(
         pm_conv_tol=pm_conv_tol,
         pm_conv_tol_grad=pm_conv_tol_grad,
         pm_max_cycle=pm_max_cycle,
+        pm_exponent=pm_exponent,
+        pm_init_guess=pm_init_guess,
         boys_conv_tol=boys_conv_tol,
         boys_conv_tol_grad=boys_conv_tol_grad,
         boys_max_cycle=boys_max_cycle,
     )
-    loc_b = _split_localize_unrestricted(
+    loc_b = _shared_split_localize_unrestricted(
         mol,
         ao_coeff_b,
         nocc_b,
@@ -157,13 +159,15 @@ def build_dmrg_orbital_basis(
         pm_conv_tol=pm_conv_tol,
         pm_conv_tol_grad=pm_conv_tol_grad,
         pm_max_cycle=pm_max_cycle,
+        pm_exponent=pm_exponent,
+        pm_init_guess=pm_init_guess,
         boys_conv_tol=boys_conv_tol,
         boys_conv_tol_grad=boys_conv_tol_grad,
         boys_max_cycle=boys_max_cycle,
     )
 
-    pairs = pair_alpha_beta_orbitals(mol, loc_a, loc_b)
-    beta_paired = reorder_beta_to_match_alpha(pairs, loc_b, loc_b.shape[1])
+    pairs = _pair_alpha_beta_orbitals(mol, loc_a, loc_b)
+    beta_paired = _reorder_beta_to_match_alpha(pairs, loc_b, loc_b.shape[1])
     S = mol.intor_symmetric("int1e_ovlp")
 
     pair_overlap = np.abs(loc_a.T @ S @ beta_paired)
@@ -177,14 +181,14 @@ def build_dmrg_orbital_basis(
     )
 
     pair_average = 0.5 * (loc_a + beta_paired)
-    interaction_matrix = compute_dmrg_ordering_matrix(
+    interaction_matrix = _compute_dmrg_ordering_matrix(
         mol,
         pair_average,
         mode=ordering_matrix_mode,
         exchange_proxy_max_orbitals=exchange_proxy_max_orbitals,
     )
-    fiedler = fiedler_ordering(interaction_matrix)
-    ordering = genetic_algorithm_ordering(
+    fiedler = _fiedler_ordering(interaction_matrix)
+    ordering = _genetic_algorithm_ordering(
         interaction_matrix,
         n_generations=ga_generations,
         population_size=ga_population,
@@ -192,8 +196,8 @@ def build_dmrg_orbital_basis(
         seed=ga_seed,
         objective=ordering_objective,
     )
-    ga_cost = chain_distance_cost(interaction_matrix, ordering)
-    fiedler_cost = chain_distance_cost(interaction_matrix, fiedler)
+    ga_cost = _chain_distance_cost(interaction_matrix, ordering)
+    fiedler_cost = _chain_distance_cost(interaction_matrix, fiedler)
     ordering_is_permutation = sorted(ordering) == list(range(len(ordering)))
 
     active_loc_a = _project_into_active_space(cas.mo_coeff_alpha, loc_a, S)
@@ -203,7 +207,7 @@ def build_dmrg_orbital_basis(
     orth_err_alpha = float(np.max(np.abs(final_alpha.T @ S @ final_alpha - np.eye(final_alpha.shape[1]))))
     orth_err_beta = float(np.max(np.abs(final_beta.T @ S @ final_beta - np.eye(final_beta.shape[1]))))
 
-    return DMRGOrbitalBasisResult(
+    return _DMRGOrbitalBasisResult(
         mo_coeff_alpha=final_alpha,
         mo_coeff_beta=final_beta,
         active_coeff_alpha=active_loc_a[:, ordering],
@@ -229,8 +233,26 @@ def build_dmrg_orbital_basis(
     )
 
 
-def save_dmrg_orbital_basis(result: DMRGOrbitalBasisResult, npz_path: str):
+def _save_dmrg_orbital_basis(
+    result: _DMRGOrbitalBasisResult,
+    npz_path: str,
+    *,
+    label: str | None = None,
+    family: str | None = None,
+    energy: float | None = None,
+    reference_state_path: str | None = None,
+    fcidump_path: str | None = None,
+    settings=None,
+    settings_payload=None,
+    cluster_info=None,
+    fcidump_data=None,
+    cas=None,
+):
     """Save prepared DMRG orbitals and metadata."""
+    settings_payload = _extend_settings_payload(
+        settings_payload,
+        source_method=result.source_method,
+    )
     pair_array = np.asarray(result.pairs, dtype=int) if result.pairs else np.empty((0, 2), dtype=int)
     payload = {
         "mo_coeff_alpha": result.mo_coeff_alpha,
@@ -257,97 +279,23 @@ def save_dmrg_orbital_basis(result: DMRGOrbitalBasisResult, npz_path: str):
         "fiedler_cost": np.array(result.fiedler_cost),
     }
     if npz_path.endswith(".npz"):
-        save_dmrg_basis_h5(npz_path[:-4] + ".h5", payload)
+        _save_dmrg_basis_h5(
+            npz_path[:-4] + ".h5",
+            payload,
+            label=label,
+            family=family,
+            energy=energy,
+            reference_state_path=reference_state_path,
+            fcidump_path=fcidump_path,
+            settings=settings,
+            settings_payload=settings_payload,
+            cluster_info=cluster_info,
+            fcidump_data=fcidump_data,
+            cas=cas,
+        )
     np.savez(npz_path, **payload)
-
-
-def _natural_orbitals_from_dm(dm_mo: np.ndarray):
-    """Diagonalize a 1-RDM block to obtain natural occupations/orbitals."""
-    return _shared_natural_orbitals_from_dm(dm_mo)
 
 
 def _project_into_active_space(active_coeff, localized_coeff, S):
     """Express localized AO-space orbitals in the original active-space basis."""
     return active_coeff.T @ S @ localized_coeff
-
-
-def _split_localize_unrestricted(
-    mol,
-    ao_coeff: np.ndarray,
-    nocc: int,
-    *,
-    method: str,
-    lo_module,
-    pm_pop_method: str,
-    pm_conv_tol: float,
-    pm_conv_tol_grad: float | None,
-    pm_max_cycle: int,
-    boys_conv_tol: float,
-    boys_conv_tol_grad: float | None,
-    boys_max_cycle: int,
-):
-    """Localize occupied and virtual blocks separately for one spin channel."""
-    return _shared_split_localize_unrestricted(
-        mol,
-        ao_coeff,
-        nocc,
-        method=method,
-        lo_module=lo_module,
-        pm_pop_method=pm_pop_method,
-        pm_conv_tol=pm_conv_tol,
-        pm_conv_tol_grad=pm_conv_tol_grad,
-        pm_max_cycle=pm_max_cycle,
-        boys_conv_tol=boys_conv_tol,
-        boys_conv_tol_grad=boys_conv_tol_grad,
-        boys_max_cycle=boys_max_cycle,
-    )
-
-
-def _localize_block(
-    mol,
-    mo_block: np.ndarray,
-    *,
-    method: str,
-    lo_module,
-    pm_pop_method: str,
-    pm_conv_tol: float,
-    pm_conv_tol_grad: float | None,
-    pm_max_cycle: int,
-    boys_conv_tol: float,
-    boys_conv_tol_grad: float | None,
-    boys_max_cycle: int,
-):
-    """Localize one orbital block with PM or Boys."""
-    return _shared_localize_block(
-        mol,
-        mo_block,
-        method=method,
-        lo_module=lo_module,
-        pm_pop_method=pm_pop_method,
-        pm_conv_tol=pm_conv_tol,
-        pm_conv_tol_grad=pm_conv_tol_grad,
-        pm_max_cycle=pm_max_cycle,
-        boys_conv_tol=boys_conv_tol,
-        boys_conv_tol_grad=boys_conv_tol_grad,
-        boys_max_cycle=boys_max_cycle,
-    )
-
-
-def reorder_cas_orbital_coefficients(active_orbitals: CAS, ordering: list) -> CAS:
-    """Reorder CAS orbital coefficient-like fields for a DMRG chain ordering."""
-    result = copy.deepcopy(active_orbitals)
-
-    if active_orbitals.mo_coeff_alpha is not None:
-        result.mo_coeff_alpha = active_orbitals.mo_coeff_alpha[:, ordering]
-    if active_orbitals.mo_coeff_beta is not None:
-        result.mo_coeff_beta = active_orbitals.mo_coeff_beta[:, ordering]
-    if active_orbitals.occupations is not None:
-        result.occupations = active_orbitals.occupations[ordering]
-
-    result.orbital_labels = [
-        active_orbitals.orbital_labels[i]
-        for i in ordering
-        if i < len(active_orbitals.orbital_labels)
-    ]
-    result.orbital_ordering = np.array(ordering, dtype=int)
-    return result

@@ -8,6 +8,16 @@ def is_authoritative_cluster_info(cluster_info) -> bool:
     return getattr(cluster_info, "annotation_source", "") == "cluster_info_yaml"
 
 
+def require_authoritative_cluster_info(cluster_info, *, context: str) -> None:
+    """Raise when a workflow step requires finalized cluster_info authority."""
+    if not is_authoritative_cluster_info(cluster_info):
+        raise ValueError(
+            f"{context} requires finalized cluster_info.yaml authority. "
+            "Run 'apex-cas prepare --finalize' first and make sure the staged "
+            "workflow consumes that finalized cluster_info.yaml."
+        )
+
+
 def resolve_explicit_label(
     label: str | None,
     fallback: str,
@@ -15,7 +25,7 @@ def resolve_explicit_label(
     cluster_info=None,
     context: str = "cluster_info object",
 ) -> str:
-    """Return an explicit label or a legacy fallback.
+    """Return an explicit label or a caller-provided fallback.
 
     In strict authority mode, user-visible labels must come from the finalized
     ``cluster_info.yaml`` annotations. Missing labels therefore raise instead

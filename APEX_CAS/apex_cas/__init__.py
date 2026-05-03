@@ -1,50 +1,35 @@
-"""APEX_CAS — Automated Chemical Active Space Construction for Transition Metal Clusters.
+"""APEX_CAS package root.
 
-Provides tools for:
-  - Parsing molecular structures into ClusterInfo
-  - Building chemical active spaces (CAS) via non_computing methods (cas_builder_noncomputing.py)and computing methods (cas_builder_computing.py)
-  - Quality validation of CAS using natural orbital occupation numbers (CAS_quality.py)
-  - Orbital visualization and interactive active-space selection (orbital_visualizer.py)
-  - FCIDUMP generation (FCIDUMP_generator.py)
+This module intentionally exposes only the minimal user-facing model and helper
+surface needed by the staged `apex-cas` workflow. Construction, persistence,
+visualization, and FCIDUMP internals live in their dedicated modules.
 """
 
 __version__ = "0.1.0"
-__author__ = "Song@Elab"
 
-# ── Re-export all models ──
-from .models import (
+# ── Re-export a minimal user-facing model surface ──
+from shared.models import (
     MetalCenter,
     BridgingAtom,
     TerminalLigand,
     ClusterInfo,
-    ActiveSpaceLevel,
-    OrbitalGroup,
     CAS,
-    ActiveSpaceQuality,
     ComputationSettings,
-    NonComputingMethod,
-    NonComputingMethodConfig,
-    AVASConfig,
 )
 
-# ── Re-export key public functions ──
-from .structure_analyzer import parse_structure
-from .CAS_builder_noncomputing import build_NC_CAS
-from .CAS_builder_computing import build_computed_CAS, init_computing
-from .CAS_quality import validate_noon, print_quality_report
-from .computation_defaults import PRESETS, apply_overrides
-from .orbital_visualizer import (
-    generate_orbital_report,
-    generate_orbital_cubes,
-    generate_noon_plot,
-    load_user_selection,
-    plot_orbitals,
-    save_cas_state,
-    load_cas_state,
+# ── Re-export minimal user-facing helpers ──
+from shared.structure_parser import parse_structure
+from shared.setting_utils import (
+    load_cas_settings_file,
 )
-from .FCIDUMP_generator import (
-    transform_active_integrals,
-    write_fcidump,
-    compare_fcidumps,
-    generate_fcidump_from_selection,
-)
+
+__all__ = [
+    "MetalCenter",
+    "BridgingAtom",
+    "TerminalLigand",
+    "ClusterInfo",
+    "CAS",
+    "ComputationSettings",
+    "parse_structure",
+    "load_cas_settings_file",
+]

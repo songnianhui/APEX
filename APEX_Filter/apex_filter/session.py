@@ -1,32 +1,38 @@
-"""Session state management for the APEX_Filter interactive pipeline.
+"""Session state management for the staged APEX_Filter workflow.
 
-Manages per-step persistence so each pipeline step can be run independently,
-loading inputs from the previous step's saved state.
+The public surface here is intentionally small: step bootstrap/state loading,
+generic Step 3-10 summary persistence, and a few validated cross-step readback
+helpers. Step-specific rebuild or final-report seams are internal workflow
+details and stay private.
 """
 
 import dataclasses
 import json
 import os
 import shutil
-from typing import Optional
+from typing import Optional as _Optional
 
 import numpy as np
 import yaml
 
-from .hdf5_state_io import load_uhf_state_h5, save_uhf_state_h5
-from .models import (
-    BridgingAtom,
-    CAS,
-    ClusterInfo,
-    ComputationSettings,
-    ElectronicConfig,
-    MetalCenter,
-    OrbitalGroup,
-    OxidationAssignment,
-    SpinIsomer,
-    SpinIsomerFamily,
-    TerminalLigand,
+from .hdf5_state_io import _load_uhf_state_h5, _save_uhf_state_h5
+from shared.fcidump_io import load_fcidump as _load_fcidump
+from shared.final_state_signatures import summarize_final_state_from_dm as _summarize_final_state_from_dm
+from shared.models import (
+    ActiveSpaceQuality as _ActiveSpaceQuality,
+    BridgingAtom as _BridgingAtom,
+    CAS as _CAS,
+    ClusterInfo as _ClusterInfo,
+    ComputationSettings as _ComputationSettings,
+    ElectronicConfig as _ElectronicConfig,
+    MetalCenter as _MetalCenter,
+    OrbitalGroup as _OrbitalGroup,
+    OxidationAssignment as _OxidationAssignment,
+    SpinIsomer as _SpinIsomer,
+    SpinIsomerFamily as _SpinIsomerFamily,
+    TerminalLigand as _TerminalLigand,
 )
+from shared.settings_payloads import build_base_settings_payload as _build_base_settings_payload
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -51,8 +57,8 @@ _JSON_FILE_DESCRIPTIONS = {
         "Reference to the concrete FCIDUMP file used to initialize this filter session.",
     ),
     "settings.json": (
-        "effective_settings",
-        "Effective APEX_Filter/APEX_CAS settings used for this session after applying provenance and filter-side overrides.",
+        "bootstrap_settings_snapshot",
+        "Flat Step 1 bootstrap settings snapshot used to reconstruct ComputationSettings for downstream steps; this is distinct from the normalized requested/effective stage sidecars used from Step 3 onward.",
     ),
     "enumeration.json": (
         "enumeration_results",
@@ -160,7 +166,7 @@ def _write_json(path: str, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(_wrap_json_payload(path, data), f, indent=2, ensure_ascii=False)
 
-def _metal_to_dict(m: MetalCenter) -> dict:
+def _metal_to_dict(m: _MetalCenter) -> dict:
     return {
         "element": m.element,
         "index": m.index,
@@ -174,8 +180,8 @@ def _metal_to_dict(m: MetalCenter) -> dict:
     }
 
 
-def _metal_from_dict(d: dict) -> MetalCenter:
-    return MetalCenter(
+def _metal_from_dict(d: dict) -> _MetalCenter:
+    return _MetalCenter(
         element=d["element"],
         index=d["index"],
         position=np.array(d["position"], dtype=float),
@@ -188,7 +194,7 @@ def _metal_from_dict(d: dict) -> MetalCenter:
     )
 
 
-def _bridge_to_dict(b: BridgingAtom) -> dict:
+def _bridge_to_dict(b: _BridgingAtom) -> dict:
     return {
         "element": b.element,
         "index": b.index,
@@ -202,8 +208,8 @@ def _bridge_to_dict(b: BridgingAtom) -> dict:
     }
 
 
-def _bridge_from_dict(d: dict) -> BridgingAtom:
-    return BridgingAtom(
+def _bridge_from_dict(d: dict) -> _BridgingAtom:
+    return _BridgingAtom(
         element=d["element"],
         index=d["index"],
         position=np.array(d["position"], dtype=float),
@@ -216,7 +222,7 @@ def _bridge_from_dict(d: dict) -> BridgingAtom:
     )
 
 
-def _ligand_to_dict(lg: TerminalLigand) -> dict:
+def _ligand_to_dict(lg: _TerminalLigand) -> dict:
     return {
         "name": lg.name,
         "atom_indices": lg.atom_indices,
@@ -230,8 +236,8 @@ def _ligand_to_dict(lg: TerminalLigand) -> dict:
     }
 
 
-def _ligand_from_dict(d: dict) -> TerminalLigand:
-    return TerminalLigand(
+def _ligand_from_dict(d: dict) -> _TerminalLigand:
+    return _TerminalLigand(
         name=d["name"],
         atom_indices=d.get("atom_indices", []),
         donor_atom_index=d.get("donor_atom_index", -1),
@@ -244,7 +250,7 @@ def _ligand_from_dict(d: dict) -> TerminalLigand:
     )
 
 
-def cluster_info_to_dict(ci: ClusterInfo) -> dict:
+def _cluster_info_to_dict(ci: _ClusterInfo) -> dict:
     return {
         "metals": [_metal_to_dict(m) for m in ci.metals],
         "bridging_atoms": [_bridge_to_dict(b) for b in ci.bridging_atoms],
@@ -269,8 +275,8 @@ def cluster_info_to_dict(ci: ClusterInfo) -> dict:
     }
 
 
-def cluster_info_from_dict(d: dict) -> ClusterInfo:
-    return ClusterInfo(
+def _cluster_info_from_dict(d: dict) -> _ClusterInfo:
+    return _ClusterInfo(
         metals=[_metal_from_dict(m) for m in d.get("metals", [])],
         bridging_atoms=[_bridge_from_dict(b) for b in d.get("bridging_atoms", [])],
         terminal_ligands=[_ligand_from_dict(lg) for lg in d.get("terminal_ligands", [])],
@@ -312,7 +318,7 @@ _CAS_ARRAY_FIELDS = [
 ]
 
 
-def cas_to_json_and_npz(cas: CAS):
+def _cas_to_json_and_npz(cas: _CAS):
     """Split CAS into scalar dict (for JSON) and array dict (for NPZ)."""
     meta = {}
     # Scalar fields
@@ -349,9 +355,8 @@ def cas_to_json_and_npz(cas: CAS):
     return meta, arrays
 
 
-def cas_from_json_and_npz(meta: dict, arrays: dict) -> CAS:
+def _cas_from_json_and_npz(meta: dict, arrays: dict) -> _CAS:
     """Reconstruct CAS from scalar dict + NPZ arrays dict."""
-    from .models import ActiveSpaceLevel, ActiveSpaceQuality
 
     kwargs = {}
     for f in _CAS_SCALAR_FIELDS:
@@ -363,27 +368,27 @@ def cas_from_json_and_npz(meta: dict, arrays: dict) -> CAS:
             kwargs[f] = meta[f]
     # orbital groups
     if "orbital_groups" in meta:
-        kwargs["orbital_groups"] = [OrbitalGroup(**og) for og in meta["orbital_groups"]]
+        kwargs["orbital_groups"] = [_OrbitalGroup(**og) for og in meta["orbital_groups"]]
     # quality
     if "quality" in meta:
         qd = meta["quality"]
         # Convert list fields back
         if "noon_values" in qd and isinstance(qd["noon_values"], list):
             qd["noon_values"] = np.array(qd["noon_values"])
-        kwargs["quality"] = ActiveSpaceQuality(**qd)
+        kwargs["quality"] = _ActiveSpaceQuality(**qd)
     # arrays
     for f in _CAS_ARRAY_FIELDS:
         if f in arrays:
             kwargs[f] = arrays[f]
 
-    return CAS(**kwargs)
+    return _CAS(**kwargs)
 
 
 # ──────────────────────────────────────────────────────────────────
 # Spin/Electronic config serialization
 # ──────────────────────────────────────────────────────────────────
 
-def spin_isomer_to_dict(si: SpinIsomer) -> dict:
+def _spin_isomer_to_dict(si: _SpinIsomer) -> dict:
     return {
         "label": si.label,
         "spin_assignment": si.spin_assignment,
@@ -394,8 +399,8 @@ def spin_isomer_to_dict(si: SpinIsomer) -> dict:
     }
 
 
-def spin_isomer_from_dict(d: dict) -> SpinIsomer:
-    return SpinIsomer(
+def _spin_isomer_from_dict(d: dict) -> _SpinIsomer:
+    return _SpinIsomer(
         label=d["label"],
         spin_assignment={int(k): v for k, v in d.get("spin_assignment", {}).items()},
         n_minority=d.get("n_minority", 0),
@@ -405,24 +410,24 @@ def spin_isomer_from_dict(d: dict) -> SpinIsomer:
     )
 
 
-def oxidation_to_dict(oa: OxidationAssignment) -> dict:
+def _oxidation_to_dict(oa: _OxidationAssignment) -> dict:
     return {
         "assignments": oa.assignments,
         "description": oa.description,
     }
 
 
-def oxidation_from_dict(d: dict) -> OxidationAssignment:
-    return OxidationAssignment(
+def _oxidation_from_dict(d: dict) -> _OxidationAssignment:
+    return _OxidationAssignment(
         assignments={int(k): v for k, v in d.get("assignments", {}).items()},
         description=d.get("description", ""),
     )
 
 
-def electronic_config_to_dict(cfg: ElectronicConfig) -> dict:
+def _electronic_config_to_dict(cfg: _ElectronicConfig) -> dict:
     d = {
-        "spin_isomer": spin_isomer_to_dict(cfg.spin_isomer) if cfg.spin_isomer else None,
-        "oxidation": oxidation_to_dict(cfg.oxidation) if cfg.oxidation else None,
+        "spin_isomer": _spin_isomer_to_dict(cfg.spin_isomer) if cfg.spin_isomer else None,
+        "oxidation": _oxidation_to_dict(cfg.oxidation) if cfg.oxidation else None,
         "d_orbital_assignments": cfg.d_orbital_assignments,
         "minority_spin_sites": cfg.minority_spin_sites,
         "spin_assignment": cfg.spin_assignment,
@@ -432,10 +437,10 @@ def electronic_config_to_dict(cfg: ElectronicConfig) -> dict:
     return d
 
 
-def electronic_config_from_dict(d: dict) -> ElectronicConfig:
-    return ElectronicConfig(
-        spin_isomer=spin_isomer_from_dict(d["spin_isomer"]) if d.get("spin_isomer") else None,
-        oxidation=oxidation_from_dict(d["oxidation"]) if d.get("oxidation") else None,
+def _electronic_config_from_dict(d: dict) -> _ElectronicConfig:
+    return _ElectronicConfig(
+        spin_isomer=_spin_isomer_from_dict(d["spin_isomer"]) if d.get("spin_isomer") else None,
+        oxidation=_oxidation_from_dict(d["oxidation"]) if d.get("oxidation") else None,
         d_orbital_assignments={int(k): v for k, v in d.get("d_orbital_assignments", {}).items()},
         minority_spin_sites=[int(v) for v in d.get("minority_spin_sites", [])],
         spin_assignment={int(k): v for k, v in d.get("spin_assignment", {}).items()},
@@ -444,21 +449,21 @@ def electronic_config_from_dict(d: dict) -> ElectronicConfig:
     )
 
 
-def spin_isomer_family_to_dict(fam: SpinIsomerFamily) -> dict:
+def _spin_isomer_family_to_dict(fam: _SpinIsomerFamily) -> dict:
     return {
         "label": fam.label,
         "n_minority": fam.n_minority,
-        "isomers": [spin_isomer_to_dict(iso) for iso in fam.isomers],
-        "representative": spin_isomer_to_dict(fam.representative) if fam.representative else None,
+        "isomers": [_spin_isomer_to_dict(iso) for iso in fam.isomers],
+        "representative": _spin_isomer_to_dict(fam.representative) if fam.representative else None,
     }
 
 
-def spin_isomer_family_from_dict(d: dict) -> SpinIsomerFamily:
-    return SpinIsomerFamily(
+def _spin_isomer_family_from_dict(d: dict) -> _SpinIsomerFamily:
+    return _SpinIsomerFamily(
         label=d["label"],
         n_minority=d.get("n_minority", 0),
-        isomers=[spin_isomer_from_dict(iso) for iso in d.get("isomers", [])],
-        representative=spin_isomer_from_dict(d["representative"]) if d.get("representative") else None,
+        isomers=[_spin_isomer_from_dict(iso) for iso in d.get("isomers", [])],
+        representative=_spin_isomer_from_dict(d["representative"]) if d.get("representative") else None,
     )
 
 
@@ -506,21 +511,6 @@ _STEP_DIRS = {
     "step12_cc_composite": "step12_cc_composite",
 }
 
-_STEP_ORDER = [
-    "step1_load",
-    "step2_enumerate",
-    "step3_uhf",
-    "step4_ccsd",
-    "step5_ccsd_t",
-    "step6_ccsdt",
-    "step7_dmrg_basis",
-    "step8_dmrg",
-    "step9_extrapolate",
-    "step10_report",
-    "step11_fno_uccsdtq",
-    "step12_cc_composite",
-]
-
 _STEP_PREV = {
     "step2_enumerate": "step1_load",
     "step3_uhf": "step2_enumerate",
@@ -535,26 +525,16 @@ _STEP_PREV = {
     "step12_cc_composite": "step11_fno_uccsdtq",
 }
 
-def _load_method_controls_template() -> dict:
-    """Load the shared method-controls template used to seed new sessions."""
-    template_path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "..",
-            "shared",
-            "config",
-            "method_controls_template.yaml",
-        )
+_METHOD_CONTROLS_TEMPLATE_PATH = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "shared",
+        "config",
+        "method_controls_template.yaml",
     )
-    with open(template_path) as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Invalid method controls template: {template_path}")
-    return data
-
-
-_DEFAULT_METHOD_CONTROLS = _load_method_controls_template()
+)
 
 
 class SessionManager:
@@ -564,29 +544,6 @@ class SessionManager:
         self.session_dir = os.path.abspath(session_dir)
         self._session_json = os.path.join(self.session_dir, "session.json")
         self._method_controls_yaml = os.path.join(self.session_dir, "method_controls.yaml")
-        self._migrate_legacy_step5_dir()
-
-    def _migrate_legacy_step5_dir(self):
-        """Rename legacy step5 directory ``step5_ccsdt`` to ``step5_ccsd_t``."""
-        legacy = os.path.join(self.session_dir, "step5_ccsdt")
-        current = os.path.join(self.session_dir, "step5_ccsd_t")
-        if not os.path.exists(legacy):
-            return
-        if not os.path.exists(current):
-            os.rename(legacy, current)
-            return
-
-        for root, dirs, files in os.walk(legacy):
-            rel = os.path.relpath(root, legacy)
-            dst_root = current if rel == "." else os.path.join(current, rel)
-            os.makedirs(dst_root, exist_ok=True)
-            for name in files:
-                src = os.path.join(root, name)
-                dst = os.path.join(dst_root, name)
-                if os.path.exists(dst):
-                    os.remove(dst)
-                shutil.move(src, dst)
-        shutil.rmtree(legacy)
 
     # ── Session lifecycle ──────────────────────────────────────────
 
@@ -625,8 +582,7 @@ class SessionManager:
         """Create the session-local method control file if it does not exist."""
         if os.path.exists(self._method_controls_yaml):
             return
-        with open(self._method_controls_yaml, "w") as f:
-            yaml.safe_dump(_DEFAULT_METHOD_CONTROLS, f, sort_keys=False)
+        shutil.copyfile(_METHOD_CONTROLS_TEMPLATE_PATH, self._method_controls_yaml)
 
     def load_method_controls(self) -> dict:
         self.ensure_method_controls()
@@ -644,6 +600,11 @@ class SessionManager:
         1. built-in defaults
         2. session-local method_controls.yaml
         3. CLI values that differ from the built-in defaults
+
+        Notes:
+        - ``None`` CLI values never override session YAML.
+        - CLI values equal to the built-in defaults are treated as implicit
+          parser defaults and therefore do not override session YAML.
         """
         controls = self.load_method_controls()
         resolved = dict(defaults)
@@ -654,9 +615,20 @@ class SessionManager:
                     resolved[key] = value
         if cli_values:
             for key, value in cli_values.items():
+                if value is None:
+                    continue
                 if key not in defaults or value != defaults[key]:
                     resolved[key] = value
         return resolved
+
+    def _build_step_settings_payload(self, source_settings, *, theory: str, **overrides) -> dict:
+        """Build a canonical step payload with session-local provenance attached."""
+        return _build_base_settings_payload(
+            source_settings,
+            control_source=self.method_controls_path,
+            theory=theory,
+            **overrides,
+        )
 
     def mark_step_completed(self, step: str):
         data = self.load()
@@ -687,11 +659,16 @@ class SessionManager:
         config_path,
         apex_cas_provenance: dict | None = None,
     ):
+        """Persist the canonical Step 1 bootstrap state.
+
+        Semantically this is the Step 1 session-state writer for the validated
+        staged workflow.
+        """
         d = self._step_dir("step1_load")
         # cluster_info
-        _write_json(os.path.join(d, "cluster_info.json"), cluster_info_to_dict(cluster_info))
+        _write_json(os.path.join(d, "cluster_info.json"), _cluster_info_to_dict(cluster_info))
         # CAS: scalar → JSON, arrays → NPZ
-        meta, arrays = cas_to_json_and_npz(cas)
+        meta, arrays = _cas_to_json_and_npz(cas)
         _write_json(os.path.join(d, "cas_meta.json"), meta)
         if arrays:
             np.savez(os.path.join(d, "cas_arrays.npz"), **arrays)
@@ -711,21 +688,22 @@ class SessionManager:
         self.mark_step_completed("step1_load")
 
     def load_load_state(self) -> dict:
+        """Load the canonical Step 1 bootstrap state for downstream steps."""
         d = self._step_dir("step1_load")
-        ci = cluster_info_from_dict(_read_json(os.path.join(d, "cluster_info.json")))
+        ci = _cluster_info_from_dict(_read_json(os.path.join(d, "cluster_info.json")))
         cas_meta = _read_json(os.path.join(d, "cas_meta.json"))
         cas_arrays = {}
         npz_path = os.path.join(d, "cas_arrays.npz")
         if os.path.exists(npz_path):
             npz = np.load(npz_path, allow_pickle=True)
             cas_arrays = {k: npz[k] for k in npz.files}
-        cas = cas_from_json_and_npz(cas_meta, cas_arrays)
+        cas = _cas_from_json_and_npz(cas_meta, cas_arrays)
         fcidump_path = _read_json(os.path.join(d, "fcidump_ref.json"))["fcidump_path"]
-        from .CAS_loader import load_fcidump
-        fcidump_data = load_fcidump(fcidump_path)
+        fcidump_data = _load_fcidump(fcidump_path)
         raw_settings = _read_json(os.path.join(d, "settings.json"))
         raw_settings.pop("apex_cas_provenance", None)
-        settings = ComputationSettings(**raw_settings)
+        allowed = _ComputationSettings.__dataclass_fields__.keys()
+        settings = _ComputationSettings(**{k: v for k, v in raw_settings.items() if k in allowed})
         return {
             "cluster_info": ci,
             "cas": cas,
@@ -738,13 +716,14 @@ class SessionManager:
     # ── Step 2: Enumerate ──────────────────────────────────────────
 
     def save_enumeration(self, configs, spin_isomers, families, n_total, stats=None):
+        """Persist the canonical Step 2 enumeration snapshot."""
         d = self._step_dir("step2_enumerate")
         _write_json(
             os.path.join(d, "enumeration.json"),
             {
-                "configs": [electronic_config_to_dict(c) for c in configs],
-                "spin_isomers": [spin_isomer_to_dict(si) for si in spin_isomers],
-                "families": [spin_isomer_family_to_dict(fam) for fam in families],
+                "configs": [_electronic_config_to_dict(c) for c in configs],
+                "spin_isomers": [_spin_isomer_to_dict(si) for si in spin_isomers],
+                "families": [_spin_isomer_family_to_dict(fam) for fam in families],
                 "n_total": n_total,
                 "stats": stats or {},
             },
@@ -752,28 +731,50 @@ class SessionManager:
         self.mark_step_completed("step2_enumerate")
 
     def load_enumeration(self) -> dict:
+        """Load the canonical Step 2 enumeration snapshot."""
         d = self._step_dir("step2_enumerate")
         data = _read_json(os.path.join(d, "enumeration.json"))
         return {
-            "configs": [electronic_config_from_dict(c) for c in data["configs"]],
-            "spin_isomers": [spin_isomer_from_dict(si) for si in data["spin_isomers"]],
-            "families": [spin_isomer_family_from_dict(fam) for fam in data["families"]],
+            "configs": [_electronic_config_from_dict(c) for c in data["configs"]],
+            "spin_isomers": [_spin_isomer_from_dict(si) for si in data["spin_isomers"]],
+            "families": [_spin_isomer_family_from_dict(fam) for fam in data["families"]],
             "n_total": data["n_total"],
             "stats": data.get("stats", {}),
         }
 
-    # ── Step 3: UHF ──────────────────────────────────────────────
-
-    def save_uhf_picked(self, labels):
-        d = self._step_dir("step3_uhf")
+    def save_step_picked(self, step_name: str, labels) -> None:
+        d = self._step_dir(step_name)
         _write_json(os.path.join(d, "picked_configs.json"), {"labels": labels})
 
-    def load_uhf_picked(self) -> list[str]:
-        d = self._step_dir("step3_uhf")
+    def load_step_picked(self, step_name: str) -> list[str]:
+        d = self._step_dir(step_name)
         return _read_json(os.path.join(d, "picked_configs.json"))["labels"]
 
-    def save_uhf_result(self, label: str, result, *, family: str = "", state: dict | None = None):
-        """Save a single UHF result as both legacy NPZ and structured HDF5."""
+    def save_step_summary(self, step_name: str, filename: str, payload, *, mark_completed: bool = True) -> None:
+        d = self._step_dir(step_name)
+        _write_json(os.path.join(d, filename), payload)
+        if mark_completed:
+            self.mark_step_completed(step_name)
+
+    def load_step_summary(self, step_name: str, filename: str):
+        d = self._step_dir(step_name)
+        return _read_json(os.path.join(d, filename))
+
+    def step_artifact_dir(self, step_name: str, subdir: str) -> str:
+        return os.path.join(self._step_dir(step_name), subdir)
+
+    # ── Step 3: UHF ──────────────────────────────────────────────
+
+    def save_uhf_result(
+        self,
+        label: str,
+        result,
+        *,
+        family: str = "",
+        state: dict | None = None,
+        settings_payload: dict | None = None,
+    ):
+        """Save a single UHF result in the current dual-artifact NPZ+HDF5 layout."""
         d = os.path.join(self._step_dir("step3_uhf"), "results")
         safe = _sanitize_label(label)
         save_dict = {
@@ -840,32 +841,24 @@ class SessionManager:
                 state = self.load_load_state()
             except Exception:
                 state = {}
-        save_uhf_state_h5(
+        _save_uhf_state_h5(
             os.path.join(d, f"{safe}_uhf.h5"),
             save_dict,
             label=label,
             family=family,
             settings=state.get("settings"),
+            settings_payload=settings_payload,
             cluster_info=state.get("cluster_info"),
             fcidump_data=state.get("fcidump_data"),
             cas=state.get("cas"),
         )
         np.savez(os.path.join(d, f"{safe}_uhf.npz"), **save_dict)
 
-    def save_uhf_summary(self, results: list[dict]):
-        d = self._step_dir("step3_uhf")
-        _write_json(os.path.join(d, "uhf_summary.json"), results)
-        self.mark_step_completed("step3_uhf")
-
-    def load_uhf_summary(self) -> list[dict]:
-        d = self._step_dir("step3_uhf")
-        return _read_json(os.path.join(d, "uhf_summary.json"))
-
-    def rebuild_uhf_summary(self, configs: list[ElectronicConfig], current_results: list[dict] | None = None) -> list[dict]:
+    def _rebuild_uhf_summary(self, configs: list[_ElectronicConfig], current_results: list[dict] | None = None) -> list[dict]:
         """Rebuild the step3 summary from all saved UHF state artifacts.
 
-        This keeps historical UHF results visible even if the latest `uhf`
-        command only recomputed a subset of labels.
+        This preserves results for labels that were not recomputed in the
+        latest `uhf` invocation, so partial reruns do not hide prior states.
         """
         existing_summary = []
         summary_path = os.path.join(self._step_dir("step3_uhf"), "uhf_summary.json")
@@ -896,7 +889,7 @@ class SessionManager:
             prev = merged_by_label.get(label, {})
             artifact_path = os.path.join(results_dir, name)
             if name.endswith(".h5"):
-                state_data = load_uhf_state_h5(artifact_path)
+                state_data = _load_uhf_state_h5(artifact_path)
             else:
                 npz = np.load(artifact_path, allow_pickle=True)
                 state_data = {key: npz[key] for key in npz.files}
@@ -929,6 +922,22 @@ class SessionManager:
             if npz_final_site_spin_proxy:
                 final_site_spin_proxy = json.loads(str(npz_final_site_spin_proxy))
 
+            two_s = prev.get("two_s")
+            two_sz_fe1 = prev.get("two_sz_fe1")
+            two_sz_fe2 = prev.get("two_sz_fe2")
+            observables_path = os.path.join(results_dir, f"{safe_label}_post_scf_observables.json")
+            if os.path.isfile(observables_path):
+                try:
+                    observables = _read_json(observables_path)
+                    two_s = observables.get("two_s", two_s)
+                    primary_two_sz = observables.get("two_sz_by_metal_label", {}) or {}
+                    if "Fe1" in primary_two_sz:
+                        two_sz_fe1 = float(primary_two_sz["Fe1"])
+                    if "Fe2" in primary_two_sz:
+                        two_sz_fe2 = float(primary_two_sz["Fe2"])
+                except Exception:
+                    pass
+
             if (
                 final_state_signature is None
                 and "dm_a" in state_data
@@ -936,7 +945,6 @@ class SessionManager:
             ):
                 if state is None:
                     state = self.load_load_state()
-                from .reference_uhf import _summarize_final_state_from_dm
                 inferred = _summarize_final_state_from_dm(
                     state["cas"],
                     cfg,
@@ -957,6 +965,9 @@ class SessionManager:
                     "family": cfg.spin_isomer.family if cfg.spin_isomer else "",
                     "last_delta_e": last_delta_e,
                     "energy_tail": energy_tail,
+                    "two_s": two_s,
+                    "two_sz_fe1": two_sz_fe1,
+                    "two_sz_fe2": two_sz_fe2,
                     "final_d_basin": final_d_basin,
                     "final_site_spin_proxy": final_site_spin_proxy,
                     "final_state_signature": final_state_signature,
@@ -968,26 +979,9 @@ class SessionManager:
 
     # ── Step 4: CCSD ──────────────────────────────────────────────
 
-    def save_ccsd_picked(self, labels):
-        d = self._step_dir("step4_ccsd")
-        _write_json(os.path.join(d, "picked_configs.json"), {"labels": labels})
-
-    def load_ccsd_picked(self) -> list[str]:
-        d = self._step_dir("step4_ccsd")
-        return _read_json(os.path.join(d, "picked_configs.json"))["labels"]
-
-    def save_ccsd_summary(self, results: list[dict]):
-        d = self._step_dir("step4_ccsd")
-        _write_json(os.path.join(d, "ccsd_summary.json"), results)
-        self.mark_step_completed("step4_ccsd")
-
-    def load_ccsd_summary(self) -> list[dict]:
-        d = self._step_dir("step4_ccsd")
-        return _read_json(os.path.join(d, "ccsd_summary.json"))
-
-    def rebuild_ccsd_summary(
+    def _rebuild_ccsd_summary(
         self,
-        configs: list[ElectronicConfig],
+        configs: list[_ElectronicConfig],
         upstream_summary: list[dict] | None = None,
         current_results: list[dict] | None = None,
     ) -> list[dict]:
@@ -1004,7 +998,7 @@ class SessionManager:
 
         upstream_by_label = {row["label"]: row for row in (upstream_summary or []) if row.get("label")}
         config_by_safe = {_sanitize_label(cfg.label): cfg for cfg in configs}
-        results_dir = self.ccsd_scripts_dir
+        results_dir = self.step_artifact_dir("step4_ccsd", "scripts")
         rebuilt = []
         for name in sorted(os.listdir(results_dir)):
             if not name.endswith("_ccsd_results.npz"):
@@ -1038,133 +1032,45 @@ class SessionManager:
         return rebuilt
 
     @property
-    def ccsd_scripts_dir(self) -> str:
-        return os.path.join(self._step_dir("step4_ccsd"), "scripts")
-
-    @property
-    def ccsd_t_scripts_dir(self) -> str:
-        return os.path.join(self._step_dir("step5_ccsd_t"), "scripts")
-
-    @property
-    def ccsdt_scripts_dir(self) -> str:
-        return os.path.join(self._step_dir("step6_ccsdt"), "scripts")
-
-    @property
-    def dmrg_basis_results_dir(self) -> str:
-        return os.path.join(self._step_dir("step7_dmrg_basis"), "results")
-
-    @property
-    def dmrg_results_dir(self) -> str:
-        return os.path.join(self._step_dir("step8_dmrg"), "results")
-
-    @property
     def fno_results_dir(self) -> str:
         return os.path.join(self._step_dir("step11_fno_uccsdtq"), "results")
 
     # ── Step 5: CCSD(T) ──────────────────────────────────────────
 
-    def save_ccsd_t_picked(self, labels):
-        d = self._step_dir("step5_ccsd_t")
-        _write_json(os.path.join(d, "picked_configs.json"), {"labels": labels})
-
-    def load_ccsd_t_picked(self) -> list[str]:
-        d = self._step_dir("step5_ccsd_t")
-        return _read_json(os.path.join(d, "picked_configs.json"))["labels"]
-
-    def save_ccsd_t_summary(self, results: list[dict]):
-        d = self._step_dir("step5_ccsd_t")
-        _write_json(os.path.join(d, "ccsd_t_summary.json"), results)
-        self.mark_step_completed("step5_ccsd_t")
-
-    def load_ccsd_t_summary(self) -> list[dict]:
-        d = self._step_dir("step5_ccsd_t")
-        summary_path = os.path.join(d, "ccsd_t_summary.json")
-        if not os.path.exists(summary_path):
-            legacy_path = os.path.join(d, "ccsdt_summary.json")
-            summary_path = legacy_path
-        return _read_json(summary_path)
-
     # ── Step 6: CCSDT ───────────────────────────────────────────
-
-    def save_ccsdt_picked(self, labels):
-        d = self._step_dir("step6_ccsdt")
-        _write_json(os.path.join(d, "picked_configs.json"), {"labels": labels})
-
-    def load_ccsdt_picked(self) -> list[str]:
-        d = self._step_dir("step6_ccsdt")
-        return _read_json(os.path.join(d, "picked_configs.json"))["labels"]
-
-    def save_ccsdt_summary(self, results: list[dict]):
-        d = self._step_dir("step6_ccsdt")
-        _write_json(os.path.join(d, "ccsdt_summary.json"), results)
-        self.mark_step_completed("step6_ccsdt")
-
-    def load_ccsdt_summary(self) -> list[dict]:
-        d = self._step_dir("step6_ccsdt")
-        return _read_json(os.path.join(d, "ccsdt_summary.json"))
 
     # ── Step 7: DMRG orbital-basis preparation ────────────────
 
-    def save_dmrg_basis_picked(self, labels):
-        d = self._step_dir("step7_dmrg_basis")
-        _write_json(os.path.join(d, "picked_configs.json"), {"labels": labels})
-
-    def load_dmrg_basis_picked(self) -> list[str]:
-        d = self._step_dir("step7_dmrg_basis")
-        return _read_json(os.path.join(d, "picked_configs.json"))["labels"]
-
-    def save_dmrg_basis_summary(self, results: list[dict]):
-        d = self._step_dir("step7_dmrg_basis")
-        _write_json(os.path.join(d, "dmrg_basis_summary.json"), results)
-        self.mark_step_completed("step7_dmrg_basis")
-
-    def load_dmrg_basis_summary(self) -> list[dict]:
-        d = self._step_dir("step7_dmrg_basis")
-        return _read_json(os.path.join(d, "dmrg_basis_summary.json"))
-
     # ── Step 8: DMRG solve ─────────────────────────────────────
-
-    def save_dmrg_picked(self, labels):
-        d = self._step_dir("step8_dmrg")
-        _write_json(os.path.join(d, "picked_configs.json"), {"labels": labels})
-
-    def load_dmrg_picked(self) -> list[str]:
-        d = self._step_dir("step8_dmrg")
-        return _read_json(os.path.join(d, "picked_configs.json"))["labels"]
-
-    def save_dmrg_summary(self, results: list[dict]):
-        d = self._step_dir("step8_dmrg")
-        _write_json(os.path.join(d, "dmrg_summary.json"), results)
-        self.mark_step_completed("step8_dmrg")
-
-    def load_dmrg_summary(self) -> list[dict]:
-        d = self._step_dir("step8_dmrg")
-        return _read_json(os.path.join(d, "dmrg_summary.json"))
 
     # ── Step 9: DMRG extrapolation ─────────────────────────────
 
-    def save_dmrg_extrapolation_summary(self, results: list[dict]):
-        d = self._step_dir("step9_extrapolate")
-        _write_json(os.path.join(d, "dmrg_extrapolation_summary.json"), results)
-        self.mark_step_completed("step9_extrapolate")
-
-    def load_dmrg_extrapolation_summary(self) -> list[dict]:
-        d = self._step_dir("step9_extrapolate")
-        return _read_json(os.path.join(d, "dmrg_extrapolation_summary.json"))
-
     # ── Step 10: final reporting ────────────────────────────────
 
-    def save_final_summary(self, summary: list[dict], markdown: Optional[str] = None):
+    def _save_final_summary(
+        self,
+        summary: list[dict],
+        markdown: _Optional[str] = None,
+        csv_text: _Optional[str] = None,
+        extra_text_files: _Optional[dict[str, str]] = None,
+    ):
         d = self._step_dir("step10_report")
         _write_json(os.path.join(d, "final_summary.json"), summary)
         if markdown is not None:
-            with open(os.path.join(d, "final_report.md"), "w") as f:
+            with open(os.path.join(d, "final_report.md"), "w", encoding="utf-8") as f:
                 f.write(markdown)
+        if csv_text is not None:
+            # Use UTF-8 with BOM so spreadsheet apps on macOS/Windows preserve
+            # arrows and Roman numerals in state labels without mojibake.
+            with open(os.path.join(d, "final_report.csv"), "w", encoding="utf-8-sig", newline="") as f:
+                f.write(csv_text)
+        for filename, text in (extra_text_files or {}).items():
+            with open(os.path.join(d, filename), "w", encoding="utf-8-sig", newline="") as f:
+                f.write(text)
         self.mark_step_completed("step10_report")
 
-    def load_final_summary(self) -> list[dict]:
-        d = self._step_dir("step10_report")
-        return _read_json(os.path.join(d, "final_summary.json"))
+    def _load_final_summary(self) -> list[dict]:
+        return self.load_step_summary("step10_report", "final_summary.json")
 
     # ── Step 11: FNO-UCCSDTQ ────────────────────────────────────
 

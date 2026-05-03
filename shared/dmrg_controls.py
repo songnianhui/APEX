@@ -7,7 +7,7 @@ control modes.
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable as _Iterable
 
 
 def build_dmrg_sweep_schedule(
@@ -64,9 +64,9 @@ def build_dmrg_sweep_schedule(
 
 
 def compress_dmrg_schedule_for_dmrgci(
-    bond_dims: Iterable[int],
-    noises: Iterable[float],
-    thresholds: Iterable[float],
+    bond_dims: _Iterable[int],
+    noises: _Iterable[float],
+    thresholds: _Iterable[float],
 ) -> tuple[list[int], list[int], list[float], list[float]]:
     """Compress per-sweep arrays into PySCF DMRGCI stage arrays."""
     sweep_list = list(bond_dims)

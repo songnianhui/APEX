@@ -32,6 +32,8 @@ def split_localize_unrestricted(
     pm_conv_tol: float,
     pm_conv_tol_grad: float | None,
     pm_max_cycle: int,
+    pm_exponent: int,
+    pm_init_guess: str,
     boys_conv_tol: float,
     boys_conv_tol_grad: float | None,
     boys_max_cycle: int,
@@ -48,6 +50,8 @@ def split_localize_unrestricted(
         pm_conv_tol=pm_conv_tol,
         pm_conv_tol_grad=pm_conv_tol_grad,
         pm_max_cycle=pm_max_cycle,
+        pm_exponent=pm_exponent,
+        pm_init_guess=pm_init_guess,
         boys_conv_tol=boys_conv_tol,
         boys_conv_tol_grad=boys_conv_tol_grad,
         boys_max_cycle=boys_max_cycle,
@@ -61,6 +65,8 @@ def split_localize_unrestricted(
         pm_conv_tol=pm_conv_tol,
         pm_conv_tol_grad=pm_conv_tol_grad,
         pm_max_cycle=pm_max_cycle,
+        pm_exponent=pm_exponent,
+        pm_init_guess=pm_init_guess,
         boys_conv_tol=boys_conv_tol,
         boys_conv_tol_grad=boys_conv_tol_grad,
         boys_max_cycle=boys_max_cycle,
@@ -78,6 +84,8 @@ def localize_orbital_block(
     pm_conv_tol: float,
     pm_conv_tol_grad: float | None,
     pm_max_cycle: int,
+    pm_exponent: int,
+    pm_init_guess: str,
     boys_conv_tol: float,
     boys_conv_tol_grad: float | None,
     boys_max_cycle: int,
@@ -95,6 +103,8 @@ def localize_orbital_block(
         if pm_conv_tol_grad is not None:
             localizer.conv_tol_grad = pm_conv_tol_grad
         localizer.max_cycle = pm_max_cycle
+        localizer.exponent = pm_exponent
+        localizer.init_guess = pm_init_guess
         return localizer.kernel()
     if method == "boys":
         localizer = lo_module.Boys(mol, mo_block)
@@ -118,6 +128,8 @@ def localize_orbitals_with_params(mol, mo_coeff_block, method="boys", loc_params
         pm_conv_tol=params.get("conv_tol", 1e-6),
         pm_conv_tol_grad=params.get("conv_tol_grad"),
         pm_max_cycle=params.get("max_cycle", 100),
+        pm_exponent=params.get("exponent", 2),
+        pm_init_guess=params.get("init_guess", "atomic"),
         boys_conv_tol=params.get("conv_tol", 1e-6),
         boys_conv_tol_grad=params.get("conv_tol_grad"),
         boys_max_cycle=params.get("max_cycle", 100),
@@ -126,19 +138,29 @@ def localize_orbitals_with_params(mol, mo_coeff_block, method="boys", loc_params
 
 def build_localization_params_from_settings(settings, localization_method: str):
     """Build localization keyword parameters from a settings object."""
-    if localization_method != "pm":
-        return None
-
-    loc_params = {
-        "pop_method": normalize_pm_pop_method(settings.pm_pop_method),
-        "conv_tol": settings.pm_conv_tol,
-        "max_cycle": settings.pm_max_cycle,
-        "exponent": settings.pm_exponent,
-    }
-    init_guess_val = settings.pm_init_guess
-    if init_guess_val is not None and init_guess_val != "atomic":
-        loc_params["init_guess"] = init_guess_val
-    return loc_params
+    method = str(localization_method).strip().lower()
+    if method == "pm":
+        loc_params = {
+            "pop_method": normalize_pm_pop_method(settings.pm_pop_method),
+            "conv_tol": settings.pm_conv_tol,
+            "max_cycle": settings.pm_max_cycle,
+            "exponent": settings.pm_exponent,
+        }
+        if settings.pm_conv_tol_grad is not None:
+            loc_params["conv_tol_grad"] = settings.pm_conv_tol_grad
+        init_guess_val = settings.pm_init_guess
+        if init_guess_val is not None and init_guess_val != "atomic":
+            loc_params["init_guess"] = init_guess_val
+        return loc_params
+    if method == "boys":
+        loc_params = {
+            "conv_tol": settings.boys_conv_tol,
+            "max_cycle": settings.boys_max_cycle,
+        }
+        if settings.boys_conv_tol_grad is not None:
+            loc_params["conv_tol_grad"] = settings.boys_conv_tol_grad
+        return loc_params
+    return None
 
 
 def split_localize_by_occupations(

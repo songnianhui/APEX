@@ -1,163 +1,205 @@
-"""Orbital visualization utilities.
+"""Orbital visualization utilities for V1.0.0 active-space review artifacts."""
 
-Generates visualization artifacts for interactive active-space selection:
-  - YAML orbital report (template for user editing)
-  - Gaussian cube files (VESTA/Jmol)
-  - NOON bar plot (matplotlib)
-"""
+from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+import re
+from typing import Optional as _Optional
 
 import numpy as np
+from pyscf.tools import cubegen
+
+from .ao_shell_analysis import _generate_ao_shell_markdown
+from shared.cluster_info_labels import (
+    require_authoritative_cluster_info as _require_authoritative_cluster_info,
+    resolve_explicit_label as _resolve_explicit_label,
+    resolve_metal_site_label as _resolve_metal_site_label,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────────────────────────────────────────────────
-# Public API
-# ──────────────────────────────────────────────────────────────────
-
-def generate_orbital_report(
+def _generate_orbital_report(
     mol,
     mo_coeff_loc: np.ndarray,
     occupations: np.ndarray,
     labels: list[str],
     cluster_info=None,
-    output_path: str = "orbital_report.yaml",
+    output_path: str = "orbital_report.md",
     occ_active_lo: float = 0.02,
     occ_active_hi: float = 1.98,
+    active_indices: _Optional[list[int]] = None,
+    cas_type: str = "",
+    selection_method: str = "",
+    projection_weights: _Optional[np.ndarray] = None,
+    projection_weights_metal: _Optional[np.ndarray] = None,
+    projection_weights_bridging: _Optional[np.ndarray] = None,
 ) -> str:
-    """Generate a YAML orbital report that doubles as a selection template.
-
-    Each orbital entry contains index, occupation, chemical label, block
-    classification, and top AO contributions.  Users edit the ``selected``
-    field to choose active orbitals.
-
-    Parameters
-    ----------
-    mol : pyscf.gto.Mole
-    mo_coeff_loc : ndarray (nao, nmo)
-        Localized MO coefficients.
-    occupations : ndarray (nmo,)
-        UNO occupation numbers.
-    labels : list[str]
-        Chemical labels from split-localization.
-    cluster_info : ClusterInfo, optional
-        Used for AO contribution analysis on metal/bridge atoms.
-    output_path : str
-        Output YAML file path.
-    occ_active_lo, occ_active_hi : float
-        Thresholds defining the active block.
-
-    Returns
-    -------
-    str
-        Absolute path of the written file.
-    """
-    import yaml
-
+    """Generate a markdown orbital report for human review and selection."""
     nmo = len(occupations)
     aoslices = mol.aoslice_by_atom()
     ao_labels = mol.ao_labels()
+    atom_labels = _build_atom_labels(mol, cluster_info)
+    all_ao_contribs = _precompute_ao_contributions(
+        mol,
+        mo_coeff_loc,
+        aoslices,
+        ao_labels,
+        atom_labels=atom_labels,
+        top_n=3,
+    )
+    active_index_set = set(active_indices) if active_indices is not None else None
 
-    # Determine target atoms for AO contribution analysis
-    target_atom_indices = _get_target_atom_indices(mol, cluster_info)
+    orbital_rows = []
+    n_core = 0
+    n_active_noon = 0
+    n_virtual = 0
 
-    orbitals = []
     for i in range(nmo):
         occ = float(occupations[i])
-
-        # Block classification
         if occ > occ_active_hi:
             block = "core"
+            n_core += 1
         elif occ < occ_active_lo:
             block = "virtual"
+            n_virtual += 1
         else:
             block = "active"
+            n_active_noon += 1
 
-        # AO contributions
-        ao_contrib = _compute_ao_contributions(
-            mol, mo_coeff_loc[:, i], target_atom_indices, aoslices, ao_labels,
+        ao_contrib = all_ao_contribs[i]
+        is_selected = i in active_index_set if active_index_set is not None else block == "active"
+        proj_w = float(projection_weights[i]) if projection_weights is not None else 0.0
+        proj_w_m = float(projection_weights_metal[i]) if projection_weights_metal is not None else 0.0
+        proj_w_b = float(projection_weights_bridging[i]) if projection_weights_bridging is not None else 0.0
+        character = _detect_orbital_character(occ, block, proj_w, occ_active_lo, occ_active_hi)
+        ao_str = ", ".join(f"{k}:{v:.3f}" for k, v in ao_contrib.items())
+        passed_label = labels[i] if i < len(labels) else ""
+        display_label = passed_label if passed_label else (_best_chemical_label(ao_contrib) or f"orb_{i}")
+
+        orbital_rows.append(
+            {
+                "idx": i,
+                "occ": round(occ, 6),
+                "block": block,
+                "label": display_label,
+                "selected": is_selected,
+                "character": character,
+                "proj_weight": round(proj_w, 4),
+                "proj_wt_metal": round(proj_w_m, 4),
+                "proj_wt_bridging": round(proj_w_b, 4),
+                "ao_contrib": ao_str,
+            }
         )
 
-        orbitals.append({
-            "index": i,
-            "occupation": round(occ, 6),
-            "auto_label": labels[i] if i < len(labels) else f"orb_{i}",
-            "chemical_label": _best_chemical_label(ao_contrib),
-            "block": block,
-            "ao_contribution": ao_contrib,
-            "selected": block == "active",
-        })
+    n_active = len(active_indices) if active_indices is not None else n_active_noon
+    total_electrons = round(float(np.sum(occupations)), 2)
 
-    n_core = sum(1 for o in orbitals if o["block"] == "core")
-    n_active = sum(1 for o in orbitals if o["block"] == "active")
-    n_virtual = sum(1 for o in orbitals if o["block"] == "virtual")
+    lines = []
+    lines.append("# Orbital Report")
+    lines.append("")
+    lines.append("## Metadata")
+    lines.append("")
+    lines.append("| key | value |")
+    lines.append("|-----|-------|")
+    lines.append(f"| cas_type | {cas_type} |")
+    lines.append(f"| selection_method | {selection_method} |")
+    lines.append(f"| n_total | {nmo} |")
+    lines.append(f"| n_core | {n_core} |")
+    lines.append(f"| n_active | {n_active} |")
+    lines.append(f"| n_virtual | {n_virtual} |")
+    lines.append(f"| threshold_active_lo | {occ_active_lo} |")
+    lines.append(f"| threshold_active_hi | {occ_active_hi} |")
+    lines.append(f"| total_electrons | {total_electrons} |")
+    if cluster_info is not None:
+        annotation_source = getattr(cluster_info, "annotation_source", "")
+        cluster_info_path = getattr(cluster_info, "cluster_info_path", "")
+        if annotation_source:
+            lines.append(f"| atom_annotations | {annotation_source} |")
+        if cluster_info_path:
+            lines.append(f"| cluster_info_path | {cluster_info_path} |")
+    lines.append("")
 
-    report = {
-        "metadata": {
-            "n_total": nmo,
-            "n_core": n_core,
-            "n_active": n_active,
-            "n_virtual": n_virtual,
-            "threshold_active_lo": occ_active_lo,
-            "threshold_active_hi": occ_active_hi,
-            "total_electrons": round(float(np.sum(occupations)), 2),
-        },
-        "orbitals": orbitals,
-    }
+    if cluster_info is not None:
+        lines.extend(_build_atom_roles_markdown(cluster_info))
+
+    ao_analysis_md = _generate_ao_shell_markdown(mol, cluster_info)
+    if ao_analysis_md:
+        lines.append(ao_analysis_md)
+
+    lines.append("## Orbitals")
+    lines.append("")
+    lines.append("<!-- Edit the 'selected' column to choose active orbitals, then run: apex-cas fcidump -->")
+    lines.append("| idx | occ | block | label | selected | character | proj_weight | proj_wt_M | proj_wt_B | ao_contrib |")
+    lines.append("|-----|------|-------|-------|----------|-----------|-------------|-----------|-----------|------------|")
+
+    for row in orbital_rows:
+        sel_str = "true" if row["selected"] else "false"
+        lines.append(
+            f"| {row['idx']} | {row['occ']:.6f} | {row['block']} | {row['label']} | {sel_str} | "
+            f"{row['character']} | {row['proj_weight']:.4f} | {row['proj_wt_metal']:.4f} | "
+            f"{row['proj_wt_bridging']:.4f} | {row['ao_contrib']} |"
+        )
+
+    lines.append("")
+    lines.append("## Column Definitions")
+    lines.append("")
+    lines.append("| Column | Meaning |")
+    lines.append("|--------|---------|")
+    lines.append("| `idx` | MO index in the localized UNO basis. |")
+    lines.append("| `occ` | UNO occupation number from the total natural-orbital density diagonalization. |")
+    lines.append("| `block` | NOON-based classification: core / active / virtual. |")
+    lines.append("| `label` | Chemical label from all-atom Mulliken AO contributions. |")
+    lines.append("| `selected` | Current active-space choice; users may edit this manually. |")
+    lines.append("| `character` | Heuristic chemical role inferred from occupation and projection weight. |")
+    lines.append("| `proj_weight` | Total metal-d/f + bridging-p projection weight. |")
+    lines.append("| `proj_wt_M` | Projection weight onto metal d/f shells only. |")
+    lines.append("| `proj_wt_B` | Projection weight onto bridging p shells only. |")
+    lines.append("| `ao_contrib` | Top Mulliken AO contributions, used to assign chemical labels. |")
+    lines.append("")
+    lines.append("`proj_weight = proj_wt_M + proj_wt_B`.")
+    lines.append("")
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    with open(output_path, "w") as f:
-        yaml.dump(report, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    with open(output_path, "w") as handle:
+        handle.write("\n".join(lines))
 
-    logger.info("Orbital report written to %s (%d orbitals: %d core, %d active, %d virtual)",
-                output_path, nmo, n_core, n_active, n_virtual)
+    logger.info(
+        "Orbital report written to %s (%d orbitals: %d core, %d active, %d virtual, method=%s)",
+        output_path,
+        nmo,
+        n_core,
+        n_active,
+        n_virtual,
+        selection_method or "noon",
+    )
     return os.path.abspath(output_path)
 
 
-def generate_orbital_cubes(
+def _generate_orbital_cubes(
     mol,
     mo_coeff: np.ndarray,
-    indices: Optional[list[int]] = None,
+    indices: _Optional[list[int]] = None,
+    labels: _Optional[list[str]] = None,
     output_dir: str = "cubes",
     prefix: str = "orb",
     nx: int = 80,
     ny: int = 80,
     nz: int = 80,
 ) -> list[str]:
-    """Generate Gaussian cube files for selected orbitals.
-
-    Parameters
-    ----------
-    mol : pyscf.gto.Mole
-    mo_coeff : ndarray (nao, nmo)
-        Full MO coefficient matrix.
-    indices : list[int], optional
-        Orbital indices to visualize.  ``None`` visualises all columns.
-    output_dir : str
-    prefix : str
-        File name prefix.
-    nx, ny, nz : int
-        Cube grid resolution.
-
-    Returns
-    -------
-    list[str]
-        Paths to generated cube files.
-    """
-    from pyscf.tools import cubegen
-
+    """Generate Gaussian cube files for selected orbitals."""
     os.makedirs(output_dir, exist_ok=True)
-
     if indices is None:
         indices = list(range(mo_coeff.shape[1]))
 
     paths = []
     for i in indices:
-        filepath = os.path.join(output_dir, f"{prefix}_{i:04d}.cube")
+        if labels and i < len(labels) and labels[i]:
+            safe_label = _sanitize_label(labels[i])
+            filepath = os.path.join(output_dir, f"{prefix}_{i:04d}_{safe_label}.cube")
+        else:
+            filepath = os.path.join(output_dir, f"{prefix}_{i:04d}.cube")
         cubegen.orbital(mol, filepath, mo_coeff[:, i], nx=nx, ny=ny, nz=nz)
         paths.append(filepath)
 
@@ -165,53 +207,33 @@ def generate_orbital_cubes(
     return paths
 
 
-def generate_noon_plot(
+def _generate_noon_plot(
     occupations: np.ndarray,
-    labels: Optional[list[str]] = None,
+    labels: _Optional[list[str]] = None,
     output_path: str = "noon_plot.png",
     active_lo: float = 0.02,
     active_hi: float = 1.98,
     show_top_n: int = 50,
 ) -> str:
-    """Generate a NOON (Natural Orbital Occupation Number) bar plot.
-
-    Active-range orbitals are highlighted in red; core and virtual in grey.
-    Threshold lines are drawn at *active_lo* and *active_hi*.
-
-    Parameters
-    ----------
-    occupations : ndarray (nmo,)
-    labels : list[str], optional
-    output_path : str
-    active_lo, active_hi : float
-    show_top_n : int
-        Max number of chemical labels to annotate.
-
-    Returns
-    -------
-    str
-        Absolute path of the saved image.
-    """
+    """Generate a NOON dot-line plot."""
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
         logger.warning("matplotlib not available — skipping NOON plot")
-        print("WARNING: matplotlib not installed. Skipping NOON plot generation.")
-        print("  Install with: pip install matplotlib")
         return ""
 
     nmo = len(occupations)
-    colors = []
-    for occ in occupations:
-        if active_lo <= occ <= active_hi:
-            colors.append("#d62728")   # red for active
-        else:
-            colors.append("#aaaaaa")   # grey for core/virtual
+    x = np.arange(nmo)
+    active_mask = np.array([(active_lo <= occ <= active_hi) for occ in occupations])
+    inactive_mask = ~active_mask
 
     fig, ax = plt.subplots(figsize=(max(12, nmo * 0.06), 5))
-    ax.bar(range(nmo), occupations, color=colors, width=1.0, edgecolor="none")
+    ax.plot(x, occupations, color="#333333", linewidth=0.8, zorder=1)
+    ax.scatter(x[inactive_mask], occupations[inactive_mask], color="#aaaaaa", s=10, zorder=2)
+    ax.scatter(x[active_mask], occupations[active_mask], color="#d62728", s=14, zorder=3)
     ax.axhline(y=active_hi, color="blue", linestyle="--", linewidth=0.8, label=f"occ = {active_hi}")
     ax.axhline(y=active_lo, color="blue", linestyle="--", linewidth=0.8, label=f"occ = {active_lo}")
     ax.set_xlabel("Orbital index")
@@ -220,129 +242,204 @@ def generate_noon_plot(
     ax.legend(loc="upper right")
     ax.set_ylim(-0.05, 2.05)
 
-    # Annotate active-range labels
     if labels:
         active_indices = [i for i in range(nmo) if active_lo <= occupations[i] <= active_hi]
-        for k, i in enumerate(active_indices[:show_top_n]):
-            lab = labels[i] if i < len(labels) else ""
-            if lab:
-                ax.annotate(lab, (i, occupations[i]),
-                            textcoords="offset points", xytext=(0, 5),
-                            fontsize=4, rotation=90, ha="center")
+        for i in active_indices[:show_top_n]:
+            label = labels[i] if i < len(labels) else ""
+            if label:
+                ax.annotate(label, (i, occupations[i]), textcoords="offset points", xytext=(0, 5), fontsize=4, rotation=90, ha="center")
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
-
     logger.info("NOON plot saved to %s", output_path)
     return os.path.abspath(output_path)
 
 
-def load_user_selection(
-    yaml_path: str,
-) -> tuple[list[int], list[str], dict]:
-    """Read a user-edited orbital report YAML and extract selected orbitals.
+_GALLERY_SERVER_SCRIPT = """#!/usr/bin/env python3
+\"\"\"Launch a local HTTP server to view the orbital gallery.
 
-    Parameters
-    ----------
-    yaml_path : str
-        Path to the YAML file with ``selected: true`` entries.
+Usage:
+    python {script_name}
+\"\"\"
+import http.server
+import socketserver
+import webbrowser
+import os
+import sys
 
-    Returns
-    -------
-    tuple[list[int], list[str], dict]
-        (selected_indices, selected_labels, metadata)
-    """
-    import yaml
+PORT = 0  # 0 = OS picks a free port
+DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
-    with open(yaml_path) as f:
-        report = yaml.safe_load(f)
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=DIRECTORY, **kwargs)
 
-    metadata = report.get("metadata", {})
-    orbitals = report.get("orbitals", [])
-
-    selected_indices = []
-    selected_labels = []
-    for orb in orbitals:
-        if orb.get("selected", False):
-            idx = orb["index"]
-            label = orb.get("chemical_label", "") or orb.get("auto_label", f"orb_{idx}")
-            selected_indices.append(idx)
-            selected_labels.append(label)
-
-    selected_indices.sort()
-    logger.info("Loaded %d selected orbitals from %s", len(selected_indices), yaml_path)
-    return selected_indices, selected_labels, metadata
-
-
-# ──────────────────────────────────────────────────────────────────
-# Internal helpers
-# ──────────────────────────────────────────────────────────────────
-
-def _get_target_atom_indices(mol, cluster_info) -> list[int]:
-    """Return atom indices of interest (metals + bridging atoms)."""
-    if cluster_info is not None:
-        indices = [m.index for m in cluster_info.metals]
-        indices += [b.index for b in cluster_info.bridging_atoms]
-        if indices:
-            return indices
-    # Fallback: use all atoms
-    return list(range(mol.natm))
+with socketserver.TCPServer((\"\", PORT), Handler) as httpd:
+    port = httpd.server_address[1]
+    # Find the gallery HTML file
+    html_files = [f for f in os.listdir(DIRECTORY) if f.endswith(\"_orbital_gallery.html\")]
+    if html_files:
+        url = f\"http://localhost:{port}/{html_files[0]}\"
+    else:
+        url = f\"http://localhost:{port}/\"
+    print(f\"Serving {DIRECTORY}\")
+    print(f\"Open: {url}\")
+    print(\"Press Ctrl+C to stop.\")
+    webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print(\"\\nServer stopped.\")
+"""
 
 
-def _compute_ao_contributions(
-    mol,
-    mo_col: np.ndarray,
-    target_atoms: list[int],
-    aoslices,
-    ao_labels: list[str],
-    top_n: int = 3,
-) -> dict[str, float]:
-    """Compute the top-N AO contributions for a single molecular orbital.
-
-    Returns a dict like ``{"Fe1_3d": 0.65, "S2_3p": 0.15}`` with at most
-    *top_n* entries sorted by contribution (descending).
-    """
-    contributions = {}
-    for atom_idx in target_atoms:
-        if atom_idx >= len(aoslices):
-            continue
-        _, _, ao_s, ao_e = aoslices[atom_idx]
-        local_coeffs_sq = mo_col[ao_s:ao_e] ** 2
-        total = float(np.sum(local_coeffs_sq))
-        if total < 1e-6:
-            continue
-
-        # Determine element + dominant AO type
-        elem = mol.atom_symbol(atom_idx)
-        dominant = int(np.argmax(local_coeffs_sq))
-        label = ao_labels[ao_s + dominant] if ao_s + dominant < len(ao_labels) else ""
-        parts = label.split()
-        ao_type = parts[-1] if len(parts) > 1 else ""
-
-        # Map to broader type
-        import re
-        ao_broad = re.sub(r"\d+[sp]", lambda m: m.group()[-1], ao_type) if ao_type else "orb"
-
-        key = f"{elem}{atom_idx}_{ao_broad}"
-        contributions[key] = round(total, 4)
-
-    # Sort by contribution, keep top_n
-    sorted_items = sorted(contributions.items(), key=lambda x: -x[1])[:top_n]
-    return dict(sorted_items)
-
-
-def _best_chemical_label(ao_contrib: dict) -> str:
-    """Return the dominant chemical label from AO contributions."""
-    if not ao_contrib:
+def _batch_render_orbital_html(
+    cube_paths: list[str],
+    labels: list[str],
+    occupations: list[float],
+    output_dir: str,
+    isovalue: float = 0.04,
+    opacity: float = 0.85,
+    pos_color: str = "blue",
+    neg_color: str = "red",
+    bg_color: str = "black",
+    gallery_name: str = "orbital_gallery.html",
+) -> str:
+    """Render multiple cube files into a single 3Dmol gallery HTML."""
+    os.makedirs(output_dir, exist_ok=True)
+    n = len(cube_paths)
+    if n == 0:
+        logger.warning("No cube files provided for HTML gallery generation")
         return ""
-    return max(ao_contrib, key=ao_contrib.get)
 
+    while len(labels) < n:
+        labels.append(os.path.basename(cube_paths[len(labels)]))
+    while len(occupations) < n:
+        occupations.append(0.0)
 
-# ──────────────────────────────────────────────────────────────────
-# High-level convenience functions
-# ──────────────────────────────────────────────────────────────────
+    html_abs = os.path.abspath(os.path.join(output_dir, gallery_name))
+    cube_rel_paths = [
+        os.path.relpath(os.path.abspath(path), os.path.dirname(html_abs)).replace("\\", "/")
+        for path in cube_paths
+    ]
+    cube_paths_js = "[" + ", ".join(f'"{path}"' for path in cube_rel_paths) + "]"
+    nav_items = "\n".join(
+        f'<button onclick="show({i})" id="btn_{i}" title="{labels[i]} (occ={occupations[i]:.4f})">'
+        f'{labels[i]} <span style="color:#888;">occ={occupations[i]:.4f}</span></button>'
+        for i in range(n)
+    )
+    js_cdn = "https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Orbital Gallery</title>
+<script src="{js_cdn}"></script>
+<style>
+* {{ box-sizing: border-box; }}
+html, body {{ margin:0; padding:0; width:100%; height:100%; background:{bg_color}; font-family:monospace; overflow:hidden; }}
+body {{ display:flex; }}
+#sidebar {{ width:300px; min-width:300px; height:100vh; background:#1a1a1a; border-right:1px solid #333; display:flex; flex-direction:column; overflow:hidden; }}
+#sidebar-title {{ padding:8px 10px; color:#aaa; font-size:12px; background:#222; border-bottom:1px solid #333; flex-shrink:0; }}
+#btn-list {{ flex:1; overflow-y:auto; padding:4px; }}
+#btn-list button {{ display:block; width:100%; text-align:left; margin:1px 0; padding:5px 8px; cursor:pointer; font-family:monospace; font-size:11px; line-height:1.4; border:1px solid #444; background:#2a2a2a; color:#ddd; border-radius:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+#btn-list button:hover {{ background:#444; }}
+#btn-list button.active {{ background:#4477AA; color:white; border-color:#4477AA; }}
+#main {{ flex:1; display:flex; flex-direction:column; height:100vh; overflow:hidden; }}
+#info {{ padding:6px 12px; background:#1a1a1a; border-bottom:1px solid #333; color:#ccc; font-size:13px; text-align:center; flex-shrink:0; }}
+#viewer-wrap {{ flex:1; display:flex; align-items:center; justify-content:center; position:relative; }}
+#viewer {{ width:100%; height:100%; }}
+#loading {{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#888; font-size:16px; z-index:200; display:none; pointer-events:none; }}
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <div id="sidebar-title">Orbital Gallery</div>
+  <div id="btn-list">{nav_items}</div>
+</div>
+<div id="main">
+  <div id="info"></div>
+  <div id="viewer-wrap">
+    <div id="viewer"></div>
+    <div id="loading">Loading...</div>
+  </div>
+</div>
+<script>
+var cubePaths = {cube_paths_js};
+var currentViewer = null;
+var n = {n};
+var isoval = {isovalue};
+var opacity = {opacity};
+var posColor = "{pos_color}";
+var negColor = "{neg_color}";
+var bgColor = "{bg_color}";
+function loadOrbital(idx) {{
+    var viewer = document.getElementById("viewer");
+    viewer.innerHTML = "";
+    currentViewer = $3Dmol.createViewer(viewer, {{backgroundColor: bgColor}});
+    var cubeUrl = cubePaths[idx];
+    document.getElementById("loading").style.display = "block";
+    fetch(cubeUrl).then(r => r.text()).then(data => {{
+        currentViewer.addVolumetricData(data, "cube", {{isoval: isoval, color: posColor, opacity: opacity, smoothness: 5}});
+        currentViewer.addVolumetricData(data, "cube", {{isoval: -isoval, color: negColor, opacity: opacity, smoothness: 5}});
+        currentViewer.addModel(data, "cube");
+        currentViewer.setStyle(
+            {{}},
+            {{
+                stick: {{radius: 0.045, colorscheme: "Jmol"}},
+            }}
+        );
+        currentViewer.addStyle({{elem: "H"}}, {{sphere: {{scale: 0.14, colorscheme: "Jmol"}}}});
+        currentViewer.addStyle({{elem: "C"}}, {{sphere: {{scale: 0.20, colorscheme: "Jmol"}}}});
+        currentViewer.addStyle({{elem: "S"}}, {{sphere: {{scale: 0.24, colorscheme: "Jmol"}}}});
+        currentViewer.addStyle({{elem: "Fe"}}, {{sphere: {{scale: 0.27, colorscheme: "Jmol"}}}});
+        currentViewer.zoomTo();
+        currentViewer.render();
+        document.getElementById("loading").style.display = "none";
+    }}).catch(err => {{
+        document.getElementById("loading").innerText = "Error: " + err.message;
+    }});
+}}
+function show(idx) {{
+    for (var i = 0; i < n; i++) {{
+        var btn = document.getElementById("btn_" + i);
+        if (btn) btn.className = (i === idx) ? "active" : "";
+    }}
+    var btn = document.getElementById("btn_" + idx);
+    document.getElementById("info").innerText = btn.textContent;
+    btn.scrollIntoView({{block: "nearest", behavior: "smooth"}});
+    loadOrbital(idx);
+}}
+show(0);
+document.addEventListener("keydown", function(e) {{
+    var current = 0;
+    for (var i = 0; i < n; i++) {{
+        if (document.getElementById("btn_" + i).className === "active") {{ current = i; break; }}
+    }}
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {{
+        show(Math.min(current + 1, n - 1)); e.preventDefault();
+    }} else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {{
+        show(Math.max(current - 1, 0)); e.preventDefault();
+    }}
+}});
+</script>
+</body>
+</html>"""
+
+    html_path = os.path.abspath(os.path.join(output_dir, gallery_name))
+    with open(html_path, "w") as handle:
+        handle.write(html)
+
+    launcher_name = gallery_name.replace(".html", "_server.py")
+    launcher_path = os.path.join(output_dir, launcher_name)
+    with open(launcher_path, "w") as handle:
+        handle.write(_GALLERY_SERVER_SCRIPT)
+
+    logger.info("Orbital gallery HTML written to %s (%d orbitals)", html_path, n)
+    return html_path
+
 
 def plot_orbitals(
     cas,
@@ -353,322 +450,319 @@ def plot_orbitals(
     cube_grid: str = "80x80x80",
     occ_active_lo: float = 0.02,
     occ_active_hi: float = 1.98,
+    stem: str = "",
+    pw_plot_threshold: _Optional[float] = None,
+    render_png: bool = True,
+    png_isovalue: float = 0.05,
 ) -> dict:
-    """Generate full orbital visualizations from a CAS dataclass.
-
-    Extracts ``mo_coeff_full``, ``occupations_full``, ``orbital_labels_full``
-    from *cas* and calls the lower-level visualizer functions.
-
-    Parameters
-    ----------
-    cas : CAS
-        Must have ``mo_coeff_full``, ``occupations_full``, and
-        ``orbital_labels_full`` populated.
-    mol : pyscf.gto.Mole
-    output_dir : str
-        Output directory (e.g. ``outputs/orbitals/``).
-    cluster_info : ClusterInfo, optional
-    generate_cubes : bool
-    cube_grid : str
-        Grid resolution, e.g. ``"80x80x80"``.
-    occ_active_lo, occ_active_hi : float
-
-    Returns
-    -------
-    dict
-        ``{"report_path", "noon_path", "cube_dir"}``
-    """
+    """Generate report, NOON plot, thresholded cubes, and gallery for a CAS."""
     mo_coeff_loc = cas.mo_coeff_full
     occ = cas.occupations_full
     labels = cas.orbital_labels_full
-
     if mo_coeff_loc is None or occ is None:
         raise ValueError("CAS.mo_coeff_full and CAS.occupations_full must be populated.")
 
     os.makedirs(output_dir, exist_ok=True)
-
-    # 1. YAML report
-    report_path = os.path.join(output_dir, "orbital_report.yaml")
-    generate_orbital_report(
-        mol, mo_coeff_loc, occ, labels,
+    chemical_labels = _ensure_chemical_labels(mol, mo_coeff_loc, labels, cluster_info)
+    report_path = os.path.join(output_dir, f"{stem}_orbital_report.md")
+    _generate_orbital_report(
+        mol,
+        mo_coeff_loc,
+        occ,
+        chemical_labels,
         cluster_info=cluster_info,
         output_path=report_path,
         occ_active_lo=occ_active_lo,
         occ_active_hi=occ_active_hi,
+        active_indices=cas.active_indices,
+        cas_type=cas.cpt_cas_type or "",
+        selection_method=cas.selection_method or "",
+        projection_weights=cas.projection_weights,
+        projection_weights_metal=cas.projection_weights_metal,
+        projection_weights_bridging=cas.projection_weights_bridging,
     )
 
-    # 2. NOON bar plot
-    noon_path = os.path.join(output_dir, "noon_plot.png")
-    generate_noon_plot(
-        occ, labels, output_path=noon_path,
-        active_lo=occ_active_lo, active_hi=occ_active_hi,
-    )
+    noon_path = os.path.join(output_dir, f"{stem}_noon_plot.png")
+    _generate_noon_plot(occ, chemical_labels, output_path=noon_path, active_lo=occ_active_lo, active_hi=occ_active_hi)
 
-    # 3. Cube files (optional)
+    proj_weights = cas.projection_weights
+    if proj_weights is not None and pw_plot_threshold is not None:
+        selected_indices = [
+            i for i in range(mo_coeff_loc.shape[1])
+            if proj_weights[i] >= pw_plot_threshold and occ[i] >= occ_active_lo
+        ]
+    else:
+        selected_indices = [i for i in range(mo_coeff_loc.shape[1]) if occ_active_lo <= occ[i] <= occ_active_hi]
+
     cube_dir = ""
+    cube_paths: list[str] = []
     if generate_cubes:
-        active_indices = [i for i in range(len(occ))
-                          if occ_active_lo <= occ[i] <= occ_active_hi]
-        grid_parts = cube_grid.split("x")
-        nx, ny, nz = int(grid_parts[0]), int(grid_parts[1]), int(grid_parts[2])
+        nx, ny, nz = (int(part) for part in cube_grid.split("x"))
         cube_dir = os.path.join(output_dir, "cubes")
-        generate_orbital_cubes(
-            mol, mo_coeff_loc,
-            indices=active_indices,
+        cube_paths = _generate_orbital_cubes(
+            mol,
+            mo_coeff_loc,
+            indices=selected_indices,
+            labels=chemical_labels,
             output_dir=cube_dir,
-            nx=nx, ny=ny, nz=nz,
+            prefix=f"{stem}_orb",
+            nx=nx,
+            ny=ny,
+            nz=nz,
         )
 
-    return {"report_path": report_path, "noon_path": noon_path, "cube_dir": cube_dir}
+    html_gallery_path = ""
+    if render_png and cube_paths:
+        idx_to_path = {}
+        for cube_path in cube_paths:
+            fname = os.path.basename(cube_path)
+            match = re.search(r"_(\d{4})(?:_|\.cube)", fname)
+            if match:
+                idx_to_path[int(match.group(1))] = cube_path
 
+        render_cube_paths = [idx_to_path[i] for i in selected_indices if i in idx_to_path]
+        render_labels = []
+        render_occs = []
+        for i in selected_indices:
+            if i in idx_to_path:
+                label = chemical_labels[i] if i < len(chemical_labels) else f"orb_{i}"
+                render_labels.append(f"{i}: {label}")
+                render_occs.append(float(occ[i]))
 
-def _compute_energy_decomposition(cas, mf):
-    """Compute orbital energy contributions: E_core, E_act, E_vir.
+        if render_cube_paths:
+            html_gallery_path = _batch_render_orbital_html(
+                cube_paths=render_cube_paths,
+                labels=render_labels,
+                occupations=render_occs,
+                output_dir=output_dir,
+                isovalue=png_isovalue,
+                gallery_name=f"{stem}_orbital_gallery.html" if stem else "orbital_gallery.html",
+            )
 
-    Projects the Fock matrix into the UNO/LUO orbital basis, then sums
-    orbital energies weighted by occupation numbers.
-
-    Returns:
-        Tuple of (E_core, E_act, E_vir) as floats.
-    """
-    occ_full = cas.occupations_full
-    mo_coeff = cas.mo_coeff_full
-    if occ_full is None or mo_coeff is None:
-        return 0.0, 0.0, 0.0
-
-    mol = mf.mol
-
-    # Build Fock matrix: for UKS/UHF use total (alpha+beta) Fock
-    try:
-        # get_fock returns the Fock matrix for the given density
-        dm_alpha, dm_beta = mf.make_rdm1()
-        if isinstance(dm_alpha, np.ndarray) and dm_alpha.ndim == 2:
-            # Restricted-style or alpha only
-            if isinstance(mf.mo_coeff, (list, tuple)):
-                # Unrestricted: average alpha and beta Fock
-                veff_a = mf.get_veff(mol, dm_alpha)
-                veff_b = mf.get_veff(mol, dm_beta)
-                hcore = mf.get_hcore()
-                fock_a = hcore + veff_a
-                fock_b = hcore + veff_b
-                fock = 0.5 * (fock_a + fock_b)
-            else:
-                fock = mf.get_fock()
-        else:
-            fock = mf.get_fock()
-    except Exception:
-        return 0.0, 0.0, 0.0
-
-    # Project Fock into UNO basis: e_i = C_i^T F C_i
-    n = min(len(occ_full), mo_coeff.shape[1])
-    fock_uno = mo_coeff[:, :n].T @ fock @ mo_coeff[:, :n]
-    orbital_energies = np.diag(fock_uno)
-
-    occ = occ_full[:n]
-    core_mask = occ > 1.98
-    act_mask = (occ >= 0.02) & (occ <= 1.98)
-    vir_mask = occ < 0.02
-
-    e_core = float(np.sum(occ[core_mask] * orbital_energies[core_mask]))
-    e_act = float(np.sum(occ[act_mask] * orbital_energies[act_mask]))
-    e_vir = float(np.sum(occ[vir_mask] * orbital_energies[vir_mask]))
-
-    return e_core, e_act, e_vir
-
-def save_cas_state(
-    cas,
-    mol,
-    mf,
-    output_dir: str,
-) -> str:
-    """Save CAS full state to disk (HDF5).
-
-    Saves:
-    - ``outputs/scf/<descriptive>.chk`` (via mf.chkfile, written by PySCF during SCF)
-    - ``outputs/orbitals/cas_data.h5`` (mo_coeff_full, occupations_full,
-      orbital_labels_full, and active-space data)
-    - ``outputs/scf/scf_info.json`` (energy, convergence)
-
-    Parameters
-    ----------
-    cas : CAS
-    mol : pyscf.gto.Mole
-    mf : SCF object
-    output_dir : str
-        Root output directory (e.g. ``outputs/``).
-
-    Returns
-    -------
-    str
-        Path to the saved HDF5 file.
-    """
-    import json as _json
-    import h5py
-
-    scf_dir = os.path.join(output_dir, "scf")
-    orbitals_dir = os.path.join(output_dir, "orbitals")
-    os.makedirs(scf_dir, exist_ok=True)
-    os.makedirs(orbitals_dir, exist_ok=True)
-
-    # 1. Save SCF info
-    # Compute energy decomposition: E_core, E_act, E_vir from orbital energies
-    e_core, e_act, e_vir = _compute_energy_decomposition(cas, mf)
-
-    scf_info = {
-        "energy": float(mf.e_tot),
-        "E_core": e_core,
-        "E_act": e_act,
-        "E_vir": e_vir,
-        "E_tot": float(mf.e_tot),
-        "converged": bool(mf.converged),
-        "n_electrons": cas.n_electrons,
-        "n_orbitals": cas.n_orbitals,
-        "cpt_cas_type": cas.cpt_cas_type,
-        "source_method": cas.source_method,
+    return {
+        "report_path": report_path,
+        "noon_path": noon_path,
+        "cube_dir": cube_dir,
+        "html_gallery_path": html_gallery_path,
+        "chemical_labels": chemical_labels,
     }
-    scf_info_path = os.path.join(scf_dir, "scf_info.json")
-    with open(scf_info_path, "w") as f:
-        _json.dump(scf_info, f, indent=2)
-
-    # 3. Save orbital data to HDF5 with gzip-9 compression
-    h5_path = os.path.join(orbitals_dir, "cas_data.h5")
-    h5_kwargs = dict(compression="gzip", compression_opts=9)
-
-    with h5py.File(h5_path, "w") as f:
-        # Full orbital data
-        if cas.mo_coeff_full is not None:
-            f.create_dataset("mo_coeff_full", data=cas.mo_coeff_full, **h5_kwargs)
-        if cas.occupations_full is not None:
-            f.create_dataset("occupations_full", data=cas.occupations_full, **h5_kwargs)
-
-        # Active-space orbital data
-        if cas.mo_coeff_alpha is not None:
-            f.create_dataset("mo_coeff_alpha", data=cas.mo_coeff_alpha, **h5_kwargs)
-        if cas.mo_coeff_beta is not None:
-            f.create_dataset("mo_coeff_beta", data=cas.mo_coeff_beta, **h5_kwargs)
-        if cas.occupations is not None:
-            f.create_dataset("occupations", data=cas.occupations, **h5_kwargs)
-
-        # Labels (stored as variable-length strings)
-        if cas.orbital_labels_full:
-            f.create_dataset("orbital_labels_full",
-                             data=[str(l) for l in cas.orbital_labels_full])
-        if cas.orbital_labels:
-            f.create_dataset("orbital_labels",
-                             data=[str(l) for l in cas.orbital_labels])
-
-        # Metadata
-        meta = f.create_group("metadata")
-        meta.attrs["n_electrons"] = cas.n_electrons
-        meta.attrs["n_orbitals"] = cas.n_orbitals
-        meta.attrs["cpt_cas_type"] = cas.cpt_cas_type
-        meta.attrs["source_method"] = cas.source_method
-        meta.attrs["description"] = cas.description
-
-    logger.info("CAS state saved to %s", h5_path)
-    return h5_path
 
 
-def load_cas_state(case_dir: str):
-    """Load CAS full state from disk.
+def _detect_orbital_character(
+    occ: float,
+    block: str,
+    proj_weight: float,
+    occ_active_lo: float = 0.02,
+    occ_active_hi: float = 1.98,
+) -> str:
+    if block == "active":
+        return "strongly_correlated"
+    if block == "core":
+        if proj_weight > 0.3:
+            return "bonding"
+        if proj_weight > 0.05:
+            return "weakly_bonding"
+        return "inert"
+    if proj_weight > 0.1:
+        return "antibonding_virtual"
+    return "virtual"
 
-    Restores mol + mf from chkfile, and CAS data from HDF5.
 
-    Parameters
-    ----------
-    case_dir : str
-        Case directory containing ``outputs/``.
+def _build_atom_labels(mol, cluster_info) -> _Optional[dict[int, str]]:
+    if cluster_info is None:
+        return None
+    _require_authoritative_cluster_info(
+        cluster_info,
+        context="Orbital label construction",
+    )
+    label_map = {}
+    for site_idx, metal in enumerate(cluster_info.metals):
+        label_map[metal.index] = _resolve_metal_site_label(cluster_info, site_idx)
+    for bridge in cluster_info.bridging_atoms:
+        label_map[bridge.index] = _resolve_explicit_label(
+            getattr(bridge, "label", ""),
+            f"{bridge.element}{bridge.index + 1}",
+            cluster_info=cluster_info,
+            context=f"bridging atom {bridge.index}",
+        )
+    for ligand in cluster_info.terminal_ligands:
+        if ligand.donor_atom_index >= 0:
+            label_map[ligand.donor_atom_index] = _resolve_explicit_label(
+                getattr(ligand, "label", ""),
+                f"{mol.atom_symbol(ligand.donor_atom_index)}{ligand.donor_atom_index + 1}",
+                cluster_info=cluster_info,
+                context=f"terminal donor atom {ligand.donor_atom_index}",
+            )
+    return label_map if label_map else None
 
-    Returns
-    -------
-    tuple[CAS, mol, mf]
-    """
-    import h5py
-    from pyscf import gto, scf as _scf
 
-    output_dir = os.path.join(case_dir, "outputs")
-    h5_path = os.path.join(output_dir, "orbitals", "cas_data.h5")
+def _precompute_ao_contributions(
+    mol,
+    mo_coeff: np.ndarray,
+    aoslices,
+    ao_labels: list[str],
+    atom_labels: _Optional[dict[int, str]] = None,
+    top_n: int = 3,
+) -> list[dict[str, float]]:
+    nao, nmo = mo_coeff.shape
+    natm = mol.natm
+    ao_starts = np.array([aoslices[i][2] for i in range(natm)])
 
-    # Find the chkfile (name is dynamically generated by init_computing)
-    import glob
-    scf_dir = os.path.join(output_dir, "scf")
-    chk_candidates = [
-        p for p in glob.glob(os.path.join(scf_dir, "*.chk"))
-        if os.path.getsize(p) > 0
-    ]
+    overlap = mol.intor_symmetric("int1e_ovlp")
+    overlap_coeff = np.dot(overlap, mo_coeff)
+    mulliken = mo_coeff * overlap_coeff
+    atom_contribs = np.add.reduceat(mulliken, ao_starts, axis=0)
 
-    if not chk_candidates:
-        raise FileNotFoundError(f"No valid chkfile found in {scf_dir}/")
+    dominant_ao_global = np.empty((natm, nmo), dtype=int)
+    for atom_idx in range(natm):
+        ao_s, ao_e = int(aoslices[atom_idx][2]), int(aoslices[atom_idx][3])
+        local_mull = mulliken[ao_s:ao_e, :]
+        dominant_local = np.argmax(local_mull, axis=0)
+        dominant_ao_global[atom_idx] = ao_s + dominant_local
 
-    # Sort by size descending (largest first as default)
-    chk_candidates.sort(key=lambda p: os.path.getsize(p), reverse=True)
-
-    if len(chk_candidates) == 1:
-        chkfile = chk_candidates[0]
-    else:
-        print(f"  Multiple chkfiles found in {scf_dir}/:")
-        for i, p in enumerate(chk_candidates):
-            size_kb = os.path.getsize(p) / 1024
-            print(f"    [{i}] {os.path.basename(p)}  ({size_kb:.1f} KB)")
-        resp = input(f"  Select [0-{len(chk_candidates)-1}] (default=0): ").strip()
-        if resp == "":
-            idx = 0
+    atom_names = []
+    for atom_idx in range(natm):
+        if atom_labels and atom_idx in atom_labels:
+            atom_names.append(atom_labels[atom_idx])
         else:
-            idx = int(resp)
-        chkfile = chk_candidates[idx]
+            atom_names.append(f"{mol.atom_symbol(atom_idx)}{atom_idx + 1}")
 
-    print(f"  Using chkfile: {os.path.basename(chkfile)}")
-    if not os.path.isfile(h5_path):
-        raise FileNotFoundError(f"CAS data file not found: {h5_path}")
+    result: list[dict[str, float]] = []
+    for mo_idx in range(nmo):
+        contribs_i = atom_contribs[:, mo_idx]
+        valid_indices = np.where(contribs_i > 1e-6)[0]
+        if len(valid_indices) == 0:
+            result.append({})
+            continue
+        sorted_idx = valid_indices[np.argsort(-contribs_i[valid_indices])][:top_n]
+        row: dict[str, float] = {}
+        for atom_idx in sorted_idx:
+            dom_ao = dominant_ao_global[atom_idx, mo_idx]
+            label = ao_labels[dom_ao] if dom_ao < len(ao_labels) else ""
+            parts = label.split()
+            ao_type = parts[-1] if len(parts) > 1 else ""
+            key = f"{atom_names[atom_idx]}_{ao_type}" if ao_type else f"{atom_names[atom_idx]}_orb"
+            row[key] = round(float(contribs_i[atom_idx]), 4)
+        result.append(row)
+    return result
 
-    # 1. Restore mol + mf from chkfile
-    from pyscf import lib
-    mol = lib.chkfile.load_mol(chkfile)
 
-    # Determine SCF type from chkfile
-    scf_data = lib.chkfile.load(chkfile, "scf")
-    is_uhf = isinstance(scf_data.get("mo_coeff"), (list, np.ndarray)) and \
-             np.ndim(scf_data["mo_coeff"]) == 3
+def _best_chemical_label(ao_contrib: dict) -> str:
+    if not ao_contrib:
+        return ""
+    return max(ao_contrib, key=ao_contrib.get)
 
-    if is_uhf:
-        mf = _scf.UHF(mol)
-    else:
-        mf = _scf.RHF(mol)
-    mf.__dict__.update(scf_data)
-    mf.chkfile = chkfile
 
-    # 2. Load CAS from HDF5
-    from . import CAS
+def _sanitize_label(label: str) -> str:
+    label = label.replace("^", "")
+    label = label.replace("(", "_")
+    label = label.replace(")", "")
+    label = re.sub(r"_+", "_", label)
+    return label.strip("_")
 
-    with h5py.File(h5_path, "r") as f:
-        cas = CAS()
 
-        # Arrays
-        if "mo_coeff_full" in f:
-            cas.mo_coeff_full = f["mo_coeff_full"][:]
-        if "occupations_full" in f:
-            cas.occupations_full = f["occupations_full"][:]
-        if "mo_coeff_alpha" in f:
-            cas.mo_coeff_alpha = f["mo_coeff_alpha"][:]
-        if "mo_coeff_beta" in f:
-            cas.mo_coeff_beta = f["mo_coeff_beta"][:]
-        if "occupations" in f:
-            cas.occupations = f["occupations"][:]
+def _ensure_chemical_labels(mol, mo_coeff, labels, cluster_info) -> list[str]:
+    """Recompute chemical labels from all-atom Mulliken analysis."""
+    if cluster_info is not None:
+        _require_authoritative_cluster_info(
+            cluster_info,
+            context="Chemical label assignment",
+        )
+    nmo = mo_coeff.shape[1]
+    aoslices = mol.aoslice_by_atom()
+    ao_labels_list = mol.ao_labels()
+    atom_labels = _build_atom_labels(mol, cluster_info)
+    all_ao_contribs = _precompute_ao_contributions(
+        mol,
+        mo_coeff,
+        aoslices,
+        ao_labels_list,
+        atom_labels=atom_labels,
+        top_n=3,
+    )
+    result = []
+    for i in range(nmo):
+        label = _best_chemical_label(all_ao_contribs[i])
+        if not label and cluster_info is not None:
+            raise ValueError(
+                f"Failed to assign a chemical orbital label for MO {i} "
+                "while using authoritative cluster_info.yaml."
+            )
+        result.append(label or f"orb_{i}")
+    return result
 
-        # Labels
-        if "orbital_labels_full" in f:
-            cas.orbital_labels_full = [str(l) for l in f["orbital_labels_full"][:]]
-        if "orbital_labels" in f:
-            cas.orbital_labels = [str(l) for l in f["orbital_labels"][:]]
 
-        # Metadata
-        meta = f["metadata"]
-        cas.n_electrons = int(meta.attrs["n_electrons"])
-        cas.n_orbitals = int(meta.attrs["n_orbitals"])
-        cas.cpt_cas_type = str(meta.attrs.get("cpt_cas_type", "uno"))
-        cas.source_method = str(meta.attrs.get("source_method", ""))
-        cas.description = str(meta.attrs.get("description", ""))
-        cas.n_qubits = 2 * cas.n_orbitals
+def _build_atom_roles_markdown(cluster_info) -> list[str]:
+    _require_authoritative_cluster_info(
+        cluster_info,
+        context="Atom role report generation",
+    )
+    lines = []
+    lines.append("## Atom Roles")
+    lines.append("")
+    lines.append("| atom | element | index | role | bonded_to |")
+    lines.append("|------|---------|-------|------|-----------|")
 
-    logger.info("CAS state loaded from %s", h5_path)
-    return cas, mol, mf
+    bond_map: dict[str, set[str]] = {}
+
+    def _ensure(label: str):
+        bond_map.setdefault(label, set())
+
+    for metal in cluster_info.metals:
+        _ensure(metal.label)
+    for bridge in cluster_info.bridging_atoms:
+        bridge_label = _resolve_explicit_label(
+            getattr(bridge, "label", ""),
+            f"{bridge.element}{bridge.index + 1}",
+            cluster_info=cluster_info,
+            context=f"bridging atom {bridge.index}",
+        )
+        _ensure(bridge_label)
+        for metal_idx in bridge.bridged_metals:
+            if 0 <= metal_idx < len(cluster_info.metals):
+                metal_label = _resolve_metal_site_label(cluster_info, metal_idx)
+                bond_map[bridge_label].add(metal_label)
+                bond_map[metal_label].add(bridge_label)
+
+    for ligand in cluster_info.terminal_ligands:
+        if ligand.donor_atom_index >= 0 and ligand.metal_index >= 0 and ligand.metal_index < len(cluster_info.metals):
+            donor_label = _resolve_explicit_label(
+                getattr(ligand, "label", ""),
+                f"{cluster_info.all_elements[ligand.donor_atom_index]}{ligand.donor_atom_index + 1}",
+                cluster_info=cluster_info,
+                context=f"terminal donor atom {ligand.donor_atom_index}",
+            )
+            metal_label = _resolve_metal_site_label(cluster_info, ligand.metal_index)
+            _ensure(donor_label)
+            bond_map[donor_label].add(metal_label)
+            bond_map[metal_label].add(donor_label)
+
+    for site_idx, metal in enumerate(cluster_info.metals):
+        metal_label = _resolve_metal_site_label(cluster_info, site_idx)
+        bonded = ", ".join(sorted(bond_map.get(metal_label, set())))
+        lines.append(f"| {metal_label} | {metal.element} | {metal.index} | metal | {bonded} |")
+
+    for bridge in cluster_info.bridging_atoms:
+        bridge_label = _resolve_explicit_label(
+            getattr(bridge, "label", ""),
+            f"{bridge.element}{bridge.index + 1}",
+            cluster_info=cluster_info,
+            context=f"bridging atom {bridge.index}",
+        )
+        bonded = ", ".join(sorted(bond_map.get(bridge_label, set())))
+        lines.append(f"| {bridge_label} | {bridge.element} | {bridge.index} | bridging | {bonded} |")
+
+    for ligand in cluster_info.terminal_ligands:
+        if ligand.donor_atom_index >= 0 and ligand.metal_index >= 0 and ligand.metal_index < len(cluster_info.metals):
+            donor_label = _resolve_explicit_label(
+                getattr(ligand, "label", ""),
+                f"{cluster_info.all_elements[ligand.donor_atom_index]}{ligand.donor_atom_index + 1}",
+                cluster_info=cluster_info,
+                context=f"terminal donor atom {ligand.donor_atom_index}",
+            )
+            bonded = ", ".join(sorted(bond_map.get(donor_label, set())))
+            element = cluster_info.all_elements[ligand.donor_atom_index]
+            lines.append(f"| {donor_label} | {element} | {ligand.donor_atom_index} | terminal | {bonded} |")
+
+    lines.append("")
+    return lines

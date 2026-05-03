@@ -1,17 +1,21 @@
-"""DMRG solve and extrapolation steps for the interactive APEX_Filter pipeline."""
+"""Step 8-9 DMRG solve/extrapolation entrypoints for the staged APEX_Filter workflow."""
 
-import hashlib
 import os
-import re
-import unicodedata
 
-from .energy_extrapolation import dmrg_d_extrapolation
-from .pick import apply_pick, parse_pick_arg
-from .reference_dmrg import run_reference_dmrg, save_reference_dmrg_result
-from .selection_guidance import attach_display_labels, build_display_label_map
-from .session import SessionManager
+from ._dmrg_summary import (
+    _DMRG_SOURCE_MODE_CONVERGED_ONLY,
+    _DMRG_SOURCE_MODE_UNCONVERGED_FALLBACK,
+)
+from .energy_extrapolation import dmrg_d_extrapolation as _dmrg_d_extrapolation
+from ._case_artifacts import _preferred_step3_state_path, _preferred_step7_basis_path
+from .pick import _apply_pick, _parse_pick_arg
+from .reference_dmrg import _save_reference_dmrg_result, run_reference_dmrg as _run_reference_dmrg
+from .selection_guidance import _attach_display_labels, _build_display_label_map
+from .session import SessionManager as _SessionManager
+from ._step_selection_artifacts import _cleanup_step_selection_artifacts
+from shared.formatting import shell_safe_artifact_token as _shell_safe_artifact_token
 
-_PRE_DMKG_PICK_MODES = {"all", "labels", "file"}
+_PRE_DMRG_PICK_MODES = {"all", "labels", "file"}
 _DMRG_DEFAULTS = {
     "backend": "pyblock2_sz",
     "basis_mode": "step7_paired",
@@ -27,46 +31,6 @@ _DMRG_DEFAULTS = {
     "dav_rel_conv_thrd": None,
     "dav_type": None,
 }
-
-
-def _preferred_step3_state_path(uhf_dir: str, safe_label: str) -> str:
-    h5_path = os.path.join(uhf_dir, f"{safe_label}_uhf.h5")
-    if os.path.isfile(h5_path):
-        return h5_path
-    return os.path.join(uhf_dir, f"{safe_label}_uhf.npz")
-
-
-def _preferred_step7_basis_path(basis_dir: str, safe_label: str) -> str:
-    h5_path = os.path.join(basis_dir, f"{safe_label}_dmrg_basis.h5")
-    if os.path.isfile(h5_path):
-        return h5_path
-    return os.path.join(basis_dir, f"{safe_label}_dmrg_basis.npz")
-
-
-def _shell_safe_artifact_token(label: str) -> str:
-    """Return an ASCII/shell-safe token for scratch/log/result artifact names."""
-    normalized = unicodedata.normalize("NFKD", str(label))
-    ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", ascii_only).strip("._-")
-    prefix = safe or "dmrg_state"
-    suffix = hashlib.sha1(str(label).encode("utf-8")).hexdigest()[:8]
-    return f"{prefix}_{suffix}"
-
-
-def _remove_selection_artifacts(step_dir: str) -> None:
-    """Remove stale selection/worklist artifacts for non-pick-driven steps."""
-    for stale in (
-        "selection_candidates.csv",
-        "selection_worklist.csv",
-        "selection_guide.md",
-        "selection_candidates.json",
-        "pick_labels_all.json",
-        "pick_labels_template.json",
-    ):
-        stale_path = os.path.join(step_dir, stale)
-        if os.path.exists(stale_path):
-            os.remove(stale_path)
-
 
 def step_dmrg(
     session_dir: str,
@@ -87,7 +51,7 @@ def step_dmrg(
     dav_type: str | None = None,
 ):
     """Run active-space DMRG for selected configs and bond dimensions."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step8_dmrg", "step7_dmrg_basis")
     controls = sm.resolve_method_controls(
         "dmrg",
@@ -124,17 +88,17 @@ def step_dmrg(
 
     state = sm.load_load_state()
     enum_data = sm.load_enumeration()
-    basis_summary = sm.load_dmrg_basis_summary()
-    display_label_map = build_display_label_map(basis_summary)
+    basis_summary = sm.load_step_summary("step7_dmrg_basis", "dmrg_basis_summary.json")
+    display_label_map = _build_display_label_map(basis_summary)
 
-    pick_spec = parse_pick_arg(pick)
-    if pick_spec["mode"] not in _PRE_DMKG_PICK_MODES:
+    pick_spec = _parse_pick_arg(pick)
+    if pick_spec["mode"] not in _PRE_DMRG_PICK_MODES:
         raise ValueError(
             "Step 8 runs before DMRG energies are available, so only pick modes "
             "'all', 'labels', and 'file' are supported."
         )
 
-    selected_labels = apply_pick(pick_spec, basis_summary)
+    selected_labels = _apply_pick(pick_spec, basis_summary)
     config_map = {cfg.label: cfg for cfg in enum_data["configs"]}
     selected_configs = [config_map[label] for label in selected_labels if label in config_map]
 
@@ -147,14 +111,14 @@ def step_dmrg(
     print(f"  Schedule mode: {schedule_mode}")
     print(f"  Bond dims    : {bond_dims}")
 
-    sm.save_dmrg_picked(selected_labels)
+    sm.save_step_picked("step8_dmrg", selected_labels)
     if not selected_configs:
         print("  No configs selected. Aborting.")
-        sm.save_dmrg_summary([])
+        sm.save_step_summary("step8_dmrg", "dmrg_summary.json", [])
         return
 
-    results_dir = sm.dmrg_results_dir
-    basis_dir = sm.dmrg_basis_results_dir
+    results_dir = sm.step_artifact_dir("step8_dmrg", "results")
+    basis_dir = sm.step_artifact_dir("step7_dmrg_basis", "results")
     uhf_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
     os.makedirs(results_dir, exist_ok=True)
 
@@ -171,7 +135,7 @@ def step_dmrg(
             scratch = os.path.join(results_dir, f"{artifact_token}_M{bond_dim}_scratch")
             print(f"  {cfg.label} @ M={bond_dim} ... ", end="", flush=True)
             try:
-                result = run_reference_dmrg(
+                result = _run_reference_dmrg(
                     state["fcidump_data"],
                     uhf_npz,
                     basis_npz,
@@ -192,7 +156,29 @@ def step_dmrg(
                     scratch=scratch,
                     log_path=log_path,
                 )
-                save_reference_dmrg_result(result, out_npz)
+                _save_reference_dmrg_result(
+                    result,
+                    out_npz,
+                    label=cfg.label,
+                    family=cfg.spin_isomer.family if cfg.spin_isomer else "",
+                    settings_payload=sm._build_step_settings_payload(
+                        None,
+                        theory="DMRG",
+                        backend=backend,
+                        basis_mode=basis_mode,
+                        schedule_mode=schedule_mode,
+                        bond_dim=bond_dim,
+                        n_sweeps=n_sweeps,
+                        convergence_tol=convergence_tol,
+                        n_threads=n_threads,
+                        stack_mem=stack_mem,
+                        twosite_to_onesite=twosite_to_onesite,
+                        dav_max_iter=dav_max_iter,
+                        dav_def_max_size=dav_def_max_size,
+                        dav_rel_conv_thrd=dav_rel_conv_thrd,
+                        dav_type=dav_type,
+                    ),
+                )
                 wall_time = getattr(result, "wall_time_s", None)
                 wall_time_str = f"{wall_time:.2f}s" if wall_time is not None else "N/A"
                 print(
@@ -238,10 +224,10 @@ def step_dmrg(
                     }
                 )
 
-    attach_display_labels(summary, basis_summary)
+    _attach_display_labels(summary, basis_summary)
     step_dir = os.path.join(sm.session_dir, "step8_dmrg")
-    sm.save_dmrg_summary(summary)
-    _remove_selection_artifacts(step_dir)
+    sm.save_step_summary("step8_dmrg", "dmrg_summary.json", summary)
+    _cleanup_step_selection_artifacts(step_dir)
     n_total = len(summary)
     n_conv = sum(1 for row in summary if row.get("converged"))
     print(
@@ -253,10 +239,10 @@ def step_dmrg(
 
 def step_extrapolate_dmrg(session_dir: str):
     """Extrapolate DMRG energies to infinite bond dimension per config."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step9_extrapolate", "step8_dmrg")
 
-    dmrg_summary = sm.load_dmrg_summary()
+    dmrg_summary = sm.load_step_summary("step8_dmrg", "dmrg_summary.json")
     by_label = {}
     for row in dmrg_summary:
         if row.get("energy") is None:
@@ -273,16 +259,16 @@ def step_extrapolate_dmrg(session_dir: str):
         converged_rows = [row for row in rows if row.get("converged")]
         if converged_rows:
             used_rows = converged_rows
-            source_mode = "converged_only"
+            source_mode = _DMRG_SOURCE_MODE_CONVERGED_ONLY
         elif len(rows) >= 2:
             used_rows = rows
-            source_mode = "unconverged_fallback"
+            source_mode = _DMRG_SOURCE_MODE_UNCONVERGED_FALLBACK
         else:
             continue
         bond_dims = [int(r["bond_dim"]) for r in used_rows]
         energies = [float(r["energy"]) for r in used_rows]
         family = next((row.get("family", "") for row in used_rows if row.get("family")), "")
-        extrap = dmrg_d_extrapolation(bond_dims, energies)
+        extrap = _dmrg_d_extrapolation(bond_dims, energies)
         print(
             f"  {label}: E_inf={extrap.energy:.10f} "
             f"from M={bond_dims} "
@@ -306,8 +292,8 @@ def step_extrapolate_dmrg(session_dir: str):
             }
         )
 
-    attach_display_labels(summary, dmrg_summary)
+    _attach_display_labels(summary, dmrg_summary)
     step_dir = os.path.join(sm.session_dir, "step9_extrapolate")
-    sm.save_dmrg_extrapolation_summary(summary)
-    _remove_selection_artifacts(step_dir)
+    sm.save_step_summary("step9_extrapolate", "dmrg_extrapolation_summary.json", summary)
+    _cleanup_step_selection_artifacts(step_dir)
     print(f"Step 9 complete. {len(summary)} extrapolated energies saved.")

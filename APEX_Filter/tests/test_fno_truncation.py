@@ -4,9 +4,9 @@ import os
 
 import numpy as np
 
-from apex_filter.CAS_loader import FCIDUMPData
 from apex_filter.fno_truncation import build_fno_subspace_from_uccsd
-from apex_filter.reference_uhf import build_fake_mol, build_reference_uhf_solver
+from shared.active_space_reference import build_fake_mol, build_reference_uhf_solver
+from shared.fcidump_io import FCIDUMPData
 
 
 def _make_toy_fcidump():

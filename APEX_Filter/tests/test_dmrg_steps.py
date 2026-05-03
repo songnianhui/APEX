@@ -1,4 +1,4 @@
-"""Regression tests for DMRG solve and extrapolation steps."""
+"""Regression tests for Step 8/Step 9 DMRG solve and extrapolation."""
 
 import os
 
@@ -27,6 +27,7 @@ def _seed_session_for_dmrg(tmp_path):
 
 def test_step_dmrg_runs_mocked_solver_and_saves_summary(monkeypatch, tmp_path):
     sm = _seed_session_for_dmrg(tmp_path)
+    original_load_step_summary = SessionManager.load_step_summary
 
     monkeypatch.setattr(
         SessionManager,
@@ -41,8 +42,10 @@ def test_step_dmrg_runs_mocked_solver_and_saves_summary(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         SessionManager,
-        "load_dmrg_basis_summary",
-        lambda self: [{"label": "BS7_235", "converged": True, "family": "BS7_1"}],
+        "load_step_summary",
+        lambda self, step_name, filename: [{"label": "BS7_235", "converged": True, "family": "BS7_1"}]
+        if (step_name, filename) == ("step7_dmrg_basis", "dmrg_basis_summary.json")
+        else original_load_step_summary(self, step_name, filename),
     )
 
     def fake_run(*args, **kwargs):
@@ -66,26 +69,31 @@ def test_step_dmrg_runs_mocked_solver_and_saves_summary(monkeypatch, tmp_path):
             },
         )()
 
-    monkeypatch.setattr("apex_filter.steps_dmrg.run_reference_dmrg", fake_run)
+    monkeypatch.setattr("apex_filter.steps_dmrg._run_reference_dmrg", fake_run)
     monkeypatch.setattr(
-        "apex_filter.steps_dmrg.save_reference_dmrg_result",
-        lambda result, npz_path: np.savez(npz_path, dmrg_total=result.energy, bond_dim=result.bond_dim),
+        "apex_filter.steps_dmrg._save_reference_dmrg_result",
+        lambda result, npz_path, **kwargs: np.savez(
+            npz_path,
+            dmrg_total=result.energy,
+            bond_dim=result.bond_dim,
+        ),
     )
 
     uhf_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
-    basis_dir = sm.dmrg_basis_results_dir
+    basis_dir = sm.step_artifact_dir("step7_dmrg_basis", "results")
     os.makedirs(uhf_dir, exist_ok=True)
     os.makedirs(basis_dir, exist_ok=True)
     np.savez(os.path.join(uhf_dir, "BS7_235_uhf.npz"), dummy=1)
     np.savez(os.path.join(basis_dir, "BS7_235_dmrg_basis.npz"), dummy=1)
 
-    step_dmrg(sm.session_dir, bond_dims=[500, 1000], n_sweeps=4)
+    step_dmrg(sm.session_dir, bond_dims=[550, 1050], n_sweeps=4)
 
-    summary = sm.load_dmrg_summary()
+    summary = sm.load_step_summary("step8_dmrg", "dmrg_summary.json")
     assert len(summary) == 2
-    assert {row["bond_dim"] for row in summary} == {500, 1000}
-    assert {row["backend"] for row in summary} == {"pyblock2_sz"}
-    assert {row["basis_mode"] for row in summary} == {"step7_paired"}
+    assert {row["bond_dim"] for row in summary} == {550, 1050}
+    assert {row["backend"] for row in summary} == {"pyscf_dmrgci_sz"}
+    assert {row["basis_mode"] for row in summary} == {"original_identity"}
+    assert {row["schedule_mode"] for row in summary} == {"benchmark"}
     assert all(row["converged"] for row in summary)
     guide_path = os.path.join(sm.session_dir, "step8_dmrg", "selection_guide.md")
     csv_path = os.path.join(sm.session_dir, "step8_dmrg", "selection_candidates.csv")
@@ -99,6 +107,7 @@ def test_step_dmrg_runs_mocked_solver_and_saves_summary(monkeypatch, tmp_path):
 
 def test_step_dmrg_uses_shell_safe_artifact_names(monkeypatch, tmp_path):
     sm = _seed_session_for_dmrg(tmp_path)
+    original_load_step_summary = SessionManager.load_step_summary
 
     monkeypatch.setattr(
         SessionManager,
@@ -113,8 +122,10 @@ def test_step_dmrg_uses_shell_safe_artifact_names(monkeypatch, tmp_path):
     monkeypatch.setattr(SessionManager, "load_enumeration", lambda self: {"configs": [cfg]})
     monkeypatch.setattr(
         SessionManager,
-        "load_dmrg_basis_summary",
-        lambda self: [{"label": cfg.label, "converged": True, "family": "BS7_1"}],
+        "load_step_summary",
+        lambda self, step_name, filename: [{"label": cfg.label, "converged": True, "family": "BS7_1"}]
+        if (step_name, filename) == ("step7_dmrg_basis", "dmrg_basis_summary.json")
+        else original_load_step_summary(self, step_name, filename),
     )
 
     calls = {}
@@ -142,19 +153,23 @@ def test_step_dmrg_uses_shell_safe_artifact_names(monkeypatch, tmp_path):
             },
         )()
 
-    monkeypatch.setattr("apex_filter.steps_dmrg.run_reference_dmrg", fake_run)
+    monkeypatch.setattr("apex_filter.steps_dmrg._run_reference_dmrg", fake_run)
     monkeypatch.setattr(
-        "apex_filter.steps_dmrg.save_reference_dmrg_result",
-        lambda result, npz_path: np.savez(npz_path, dmrg_total=result.energy, bond_dim=result.bond_dim),
+        "apex_filter.steps_dmrg._save_reference_dmrg_result",
+        lambda result, npz_path, **kwargs: np.savez(
+            npz_path,
+            dmrg_total=result.energy,
+            bond_dim=result.bond_dim,
+        ),
     )
 
     uhf_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
-    basis_dir = sm.dmrg_basis_results_dir
+    basis_dir = sm.step_artifact_dir("step7_dmrg_basis", "results")
     os.makedirs(uhf_dir, exist_ok=True)
     os.makedirs(basis_dir, exist_ok=True)
-    legacy_safe_label = cfg.label.replace("|", "_").replace(" ", "_")
-    np.savez(os.path.join(uhf_dir, f"{legacy_safe_label}_uhf.npz"), dummy=1)
-    np.savez(os.path.join(basis_dir, f"{legacy_safe_label}_dmrg_basis.npz"), dummy=1)
+    flat_safe_label = cfg.label.replace("|", "_").replace(" ", "_")
+    np.savez(os.path.join(uhf_dir, f"{flat_safe_label}_uhf.npz"), dummy=1)
+    np.savez(os.path.join(basis_dir, f"{flat_safe_label}_dmrg_basis.npz"), dummy=1)
 
     step_dmrg(sm.session_dir, bond_dims=[1000], n_sweeps=4)
 
@@ -167,26 +182,26 @@ def test_step_dmrg_uses_shell_safe_artifact_names(monkeypatch, tmp_path):
     assert all(ord(ch) < 128 for ch in calls["log_path"])
     assert calls["scratch"].endswith("_scratch")
     token = os.path.basename(calls["log_path"]).replace("_M1000_dmrg.log", "")
-    assert len(token.rsplit("_", 1)[-1]) == 8
+    assert token == "Fe1downFe2up_2xFe_III_d_none"
 
 
 def test_shell_safe_artifact_token_is_unique_for_distinct_labels():
-    from apex_filter.steps_dmrg import _shell_safe_artifact_token
+    from shared.formatting import shell_safe_artifact_token
 
     label_a = "Fe1↓Fe2↑|2xFe(III)|d:none"
     label_b = "Fe1↑Fe2↓|2xFe(III)|d:none"
-    token_a = _shell_safe_artifact_token(label_a)
-    token_b = _shell_safe_artifact_token(label_b)
+    token_a = shell_safe_artifact_token(label_a)
+    token_b = shell_safe_artifact_token(label_b)
 
     assert token_a != token_b
-    assert token_a.startswith("Fe1Fe2_2xFe_III_d_none_")
-    assert token_b.startswith("Fe1Fe2_2xFe_III_d_none_")
+    assert token_a == "Fe1downFe2up_2xFe_III_d_none"
+    assert token_b == "Fe1upFe2down_2xFe_III_d_none"
 
 
 def test_step_extrapolate_dmrg_groups_by_label_and_saves_result(monkeypatch, tmp_path):
     sm = _seed_session_for_dmrg(tmp_path)
     sm.mark_step_completed("step8_dmrg")
-    sm.save_dmrg_summary(
+    sm.save_step_summary("step8_dmrg", "dmrg_summary.json", 
         [
             {"label": "BS7_235", "bond_dim": 500, "energy": -100.0, "converged": True, "family": "BS7_1"},
             {"label": "BS7_235", "bond_dim": 1000, "energy": -100.2, "converged": True, "family": "BS7_1"},
@@ -196,7 +211,7 @@ def test_step_extrapolate_dmrg_groups_by_label_and_saves_result(monkeypatch, tmp
 
     step_extrapolate_dmrg(sm.session_dir)
 
-    summary = sm.load_dmrg_extrapolation_summary()
+    summary = sm.load_step_summary("step9_extrapolate", "dmrg_extrapolation_summary.json")
     assert len(summary) == 1
     assert summary[0]["label"] == "BS7_235"
     assert summary[0]["bond_dims"] == [500, 1000]
@@ -235,6 +250,7 @@ def test_write_dmrg_basis_qc_artifacts(tmp_path):
 
 def test_step7_worklist_defaults_keep_to_one(monkeypatch, tmp_path):
     sm = SessionManager(str(tmp_path / "session"))
+    original_load_step_summary = SessionManager.load_step_summary
     sm.create()
     for step in [
         "step1_load",
@@ -254,8 +270,14 @@ def test_step7_worklist_defaults_keep_to_one(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(SessionManager, "load_load_state", lambda self: {"cas": object(), "fcidump_data": object()})
     monkeypatch.setattr(SessionManager, "load_enumeration", lambda self: {"configs": [cfg]})
-    monkeypatch.setattr(SessionManager, "load_ccsdt_summary", lambda self: [{"label": "BS7_235", "display_label": "Fe1:dz^2"}])
-    monkeypatch.setattr("apex_filter.steps_dmrg_basis.load_filter_inputs", lambda config: type("Inputs", (), {"mol": object()})())
+    monkeypatch.setattr(
+        SessionManager,
+        "load_step_summary",
+        lambda self, step_name, filename: [{"label": "BS7_235", "display_label": "Fe1:dz^2"}]
+        if (step_name, filename) == ("step6_ccsdt", "ccsdt_summary.json")
+        else original_load_step_summary(self, step_name, filename),
+    )
+    monkeypatch.setattr("apex_filter.steps_dmrg_basis._load_filter_inputs", lambda config: type("Inputs", (), {"mol": object()})())
 
     basis = type(
         "Basis",
@@ -275,8 +297,8 @@ def test_step7_worklist_defaults_keep_to_one(monkeypatch, tmp_path):
             "fiedler_cost": 1.1,
         },
     )()
-    monkeypatch.setattr("apex_filter.steps_dmrg_basis.build_dmrg_orbital_basis", lambda *args, **kwargs: basis)
-    monkeypatch.setattr("apex_filter.steps_dmrg_basis.save_dmrg_orbital_basis", lambda result, path: np.savez(path, dummy=1))
+    monkeypatch.setattr("apex_filter.steps_dmrg_basis._build_dmrg_orbital_basis", lambda *args, **kwargs: basis)
+    monkeypatch.setattr("apex_filter.steps_dmrg_basis._save_dmrg_orbital_basis", lambda result, path: np.savez(path, dummy=1))
 
     from apex_filter.steps_dmrg_basis import step_dmrg_basis
 

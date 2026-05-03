@@ -1,4 +1,9 @@
-"""Helpers for writing per-step selection guides and importable pick files."""
+"""Helpers for per-step selection guides and pick-file artifacts.
+
+This module provides shared formatting/writing utilities used by the canonical
+Step 3-10 orchestrators when they emit reviewable summaries and reusable pick
+artifacts. All helpers here are workflow-internal shared utilities.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +12,6 @@ import json
 import os
 
 import numpy as np
-
-
-def _fmt_energy(value) -> str:
-    if value is None:
-        return "N/A"
-    return f"{float(value):.10f}"
 
 
 def _fmt_value(key: str, value) -> str:
@@ -146,7 +145,7 @@ def _choose_preview_columns(summary: list[dict]) -> list[str]:
     return base + present
 
 
-def build_display_label_map(summary: list[dict]) -> dict[str, str]:
+def _build_display_label_map(summary: list[dict]) -> dict[str, str]:
     """Map machine labels to the best available user-facing display label."""
     mapping: dict[str, str] = {}
     for row in summary:
@@ -162,9 +161,9 @@ def build_display_label_map(summary: list[dict]) -> dict[str, str]:
     return mapping
 
 
-def attach_display_labels(summary: list[dict], upstream_summary: list[dict] | None) -> list[dict]:
+def _attach_display_labels(summary: list[dict], upstream_summary: list[dict] | None) -> list[dict]:
     """Propagate display labels from an upstream step while preserving machine labels."""
-    display_map = build_display_label_map(upstream_summary or [])
+    display_map = _build_display_label_map(upstream_summary or [])
     for row in summary:
         label = row.get("label")
         if not label:
@@ -178,7 +177,7 @@ def attach_display_labels(summary: list[dict], upstream_summary: list[dict] | No
     return summary
 
 
-def write_selection_artifacts(
+def _write_selection_artifacts(
     step_dir: str,
     *,
     step_name: str,

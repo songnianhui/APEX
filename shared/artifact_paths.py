@@ -5,12 +5,12 @@ from __future__ import annotations
 import glob
 import json
 import os
-from typing import Optional
+from typing import Optional as _Optional
 
 _STRUCTURE_SUFFIXES = (".xyz", ".pdb", ".mol", ".mol2", ".cif")
 
 
-def load_json_if_exists(path: str) -> Optional[dict]:
+def load_json_if_exists(path: str) -> _Optional[dict]:
     """Load JSON when present, otherwise return None."""
     if not os.path.isfile(path):
         return None
@@ -21,7 +21,7 @@ def load_json_if_exists(path: str) -> Optional[dict]:
         return None
 
 
-def load_fcidump_summary(fcidump_path: str) -> Optional[dict]:
+def load_fcidump_summary(fcidump_path: str) -> _Optional[dict]:
     """Load the matching ``*_fcidump_info.json`` sidecar when available."""
     fcidump_path = os.path.abspath(fcidump_path)
     fcidump_dir = os.path.dirname(fcidump_path)
@@ -54,7 +54,7 @@ def candidate_structure_paths(case_dir: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-def resolve_structure_path(config_raw: dict, case_dir: str) -> Optional[str]:
+def resolve_structure_path(config_raw: dict, case_dir: str) -> _Optional[str]:
     """Resolve the source structure path for topology-preserving parsing."""
     explicit = config_raw.get("structure_path") or config_raw.get("apex_cas_structure_path")
     if explicit:
@@ -80,7 +80,7 @@ def resolve_cluster_info_path(
     config_raw: dict,
     case_dir: str,
     config_dir: str | None = None,
-) -> Optional[str]:
+) -> _Optional[str]:
     """Resolve an explicit ``cluster_info.yaml`` path if configured."""
     explicit = config_raw.get("cluster_info_path")
     if not explicit:
@@ -115,7 +115,7 @@ def resolve_cluster_info_path(
     raise FileNotFoundError(f"Configured cluster_info_path does not exist: {explicit}")
 
 
-def auto_detect_fcidump(case_dir: str) -> Optional[str]:
+def auto_detect_fcidump(case_dir: str) -> _Optional[str]:
     """Auto-detect FCIDUMP file in ``case_dir/outputs/fcidump``."""
     fcidump_dir = os.path.join(case_dir, "outputs", "fcidump")
     if not os.path.isdir(fcidump_dir):
@@ -132,7 +132,7 @@ def resolve_fcidump_path(
     config_raw: dict,
     case_dir: str,
     config_dir: str | None = None,
-) -> Optional[str]:
+) -> _Optional[str]:
     """Resolve FCIDUMP path from config, supporting wildcard patterns."""
     explicit = config_raw.get("fcidump_path")
     if not explicit:

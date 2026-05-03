@@ -13,9 +13,10 @@ Arguments:
 import sys
 import os
 import time
-import numpy as np
 from pyscf import fci, ao2mo
 from pyscf.tools import fcidump as fd_mod
+from scipy.special import comb
+from shared.comparison import compare_energy_triplet
 
 # ── Defaults (Fe2S2) ──────────────────────────────────────────────
 CHAN_E_ACT   = -116.6056091
@@ -63,7 +64,6 @@ print("Converting h2e to 4-index ...")
 eri = ao2mo.restore(1, h2e_8fold, norb)
 
 # ── FCI dimension estimate ────────────────────────────────────────
-from scipy.special import comb
 ndet_a = int(comb(norb, nalpha, exact=True))
 ndet_b = int(comb(norb, nbeta, exact=True))
 ndet = ndet_a * ndet_b
@@ -100,7 +100,19 @@ print(f"  Wall time = {t1 - t0:.1f} s")
 print("\n" + "=" * 60)
 print("COMPARISON WITH CHAN")
 print("=" * 60)
+comparison = compare_energy_triplet(
+    computed_active=e_act,
+    computed_core=ecore_real,
+    computed_total=e_total,
+    reference_active=CHAN_E_ACT,
+    reference_core=chan_ecore,
+    reference_total=CHAN_E_TOTAL,
+)
 print(f"  {'':>12} {'Chan':>20} {'Ours':>20} {'Diff':>20}")
-print(f"  {'E_active':>12} {CHAN_E_ACT:>20.12f} {e_act:>20.12f} {e_act - CHAN_E_ACT:>+20.12f}")
-print(f"  {'E_core':>12} {chan_ecore:>20.12f} {ecore_real:>20.12f} {ecore_real - chan_ecore:>+20.12f}")
-print(f"  {'E_total':>12} {CHAN_E_TOTAL:>20.12f} {e_total:>20.12f} {e_total - CHAN_E_TOTAL:>+20.12f}")
+for key in ("E_active", "E_core", "E_total"):
+    print(
+        f"  {key:>12} "
+        f"{comparison['reference'][key]:>20.12f} "
+        f"{comparison['computed'][key]:>20.12f} "
+        f"{comparison['delta'][key]:>+20.12f}"
+    )

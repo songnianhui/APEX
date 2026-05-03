@@ -1,103 +1,18 @@
-#!/usr/bin/env python3
-"""
-AO Shell vs Physical Shell Correspondence Analyzer for PySCF
+"""AO-shell classification helpers for buildcas reporting.
 
-mol.ao_labels(fmt=True)
-        │
-        ▼
-  ┌─ 正则解析每条 AO 标签 ──────────────────────────────┐
-  │  '0 Fe 3dxy' → (atom_idx=0, elem='Fe', n=3, l='d', │
-  │                component='xy')                      │
-  └─────────────┬───────────────────────────────────────┘
-                ▼
-  ┌─ 按 (atom, n, l) 分组为"壳层" ─────────────────────┐
-  │  (0,'Fe',3,'d') → ['xy','yz','z²','xz','x²-y²']   │
-  └─────────────┬───────────────────────────────────────┘
-                ▼
-  ┌─ 对每个原子：由 Z → Aufbau 原理计算物理占据壳层 ──┐
-  │  Fe (Z=26):  1s 2s 2p 3s 3p 3d 4s                │
-  │  Valence:    4s, 3d  (周期表启发式)                │
-  └─────────────┬───────────────────────────────────────┘
-                ▼
-  ┌─ 逐壳层分类 ───────────────────────────────────────┐
-  │  1s → Core        (物理占据，内层)                  │
-  │  4s → Valence     (物理占据，价层)                  │
-  │  5s → Diffuse     (同角动量，更高 n)                │
-  │  4f → Polarization(角动量高于物理占据)               │
-  └────────────────────────────────────────────────────┘
-
-=============================================================
-
-Given a PySCF Mole object, analyze which AO shells in the basis set
-correspond to physical atomic electron shells and which are extra
-polarization / diffuse / correlation functions.
-
-
-
-
-
-Usage
------
-    from pyscf import gto
-    mol = gto.M('S 0 0 0', basis='tzp-dkh')
-    mol.build()
-    analyze_ao_shells(mol)
-        后输出大致为：
-        ================================================================================
-          AO Shell  vs  Physical Shell  Correspondence  Analysis
-          Basis      : tzp-dkh
-          Total AOs  : 43
-          Atoms      : 1
-        ================================================================================
-
-        ────────────────────────────────────────────────────────────────────────────────
-          Atom 0 : S  (Z = 16)
-          Ground-state config : 1s² 2s² 2p⁶ 3s² 3p⁴
-          Noble-gas notation  : [Ne] 3s² 3p⁴
-          Physical shells     : 1s, 2s, 2p, 3s, 3p
-          Valence shells      : 3s, 3p
-        ────────────────────────────────────────────────────────────────────────────────
-          Basis Shell   #AO  Components                                  Category       Physical?
-          ------------  ----  ------------------------------------------  ------------  ----------
-          ● 1s            1  —                                            Core           1s
-          ● 2s            1  —                                            Core           2s
-          ● 3s            1  —                                            Valence        3s
-          ○ 4s            1  —                                            Diffuse        —
-          ○ 5s            1  —                                            Diffuse        —
-          ○ 6s            1  —                                            Diffuse        —
-          ○ 7s            1  —                                            Diffuse        —
-          ○ 8s            1  —                                            Diffuse        —
-          ● 2px           3  x, y, z                                      Core           2p
-          ● 3px           3  x, y, z                                      Valence        3p
-          ○ 4px           3  x, y, z                                      Diffuse        —
-          ○ 5px           3  x, y, z                                      Diffuse        —
-          ○ 6px           3  x, y, z                                      Diffuse        —
-          ◇ 3dxy          5  xy, yz, z², xz, x²-y²                       Polarization   —
-          ◇ 4dxy          5  xy, yz, z², xz, x²-y²                       Polarization   —
-          ◇ 4f-3          7  -3, -2, -1, +0, +1, +2, +3                  Polarization   —
-
-          Summary for S (atom 0):
-            Category            Shells    AOs
-            ----------------    -------  -----
-            Core                    4     14
-            Valence                 3      7
-            Diffuse                 9     13
-            Polarization            3     19
-            ----------------    -------  -----
-            Total                  19     53
-
-        ================================================================================
-
-
+This module is an internal helper behind
+``orbital_visualizer.plot_orbitals(...)``. It groups PySCF AO labels into
+shells, classifies them into core/valence/polarization/diffuse buckets, and
+renders the markdown fragments embedded in ``orbital_report.md``.
 """
 
 import re
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict as _OrderedDict, defaultdict as _defaultdict
 from shared.element_data import (
-    ELEMENTS,
+    ELEMENTS as _ELEMENTS,
     L_CHAR_TO_INT,
-    get_electron_config,
-    get_valence_shells,
+    get_electron_config as _get_electron_config,
+    get_valence_shells as _get_valence_shells,
 )
 
 
@@ -114,7 +29,7 @@ def _parse(label):
 
 
 def _group(labels):
-    g = OrderedDict()
+    g = _OrderedDict()
     for lbl in labels:
         p = _parse(lbl)
         if p is None:
@@ -150,7 +65,7 @@ def _classify(n, lc, occupied, valence):
 # ================================================================
 
 
-def analyze_ao_shells(mol):
+def _analyze_ao_shells(mol):
     """
     Print a detailed table of AO-shell vs physical-shell correspondence.
 
@@ -161,7 +76,7 @@ def analyze_ao_shells(mol):
     labels = mol.ao_labels(fmt=True)
     groups = _group(labels)
 
-    by_atom = defaultdict(list)
+    by_atom = _defaultdict(list)
     for (aidx, elem, n, lc), comps in groups.items():
         by_atom[aidx].append((elem, n, lc, comps))
 
@@ -185,19 +100,23 @@ def analyze_ao_shells(mol):
     for aidx in sorted(by_atom):
         shells = by_atom[aidx]
         elem = shells[0][0]
-        Z = ELEMENTS.get(elem, 0)
+        Z = _ELEMENTS.get(elem, 0)
         if Z == 0:
             print(f"\n  Atom {aidx}: {elem} -- element not in table, skipped.")
             continue
 
-        occ, cfg, ng = get_electron_config(Z)
-        val = get_valence_shells(Z)
+        occ, cfg, ng = _get_electron_config(Z)
+        val = _get_valence_shells(Z)
 
         occ_s = ", ".join(
-            f"{n}{l}"
-            for n, l in sorted(occ, key=lambda x: (x[0], L_CHAR_TO_INT.get(x[1], 99)))
+            f"{principal_n}{shell}"
+            for principal_n, shell in sorted(
+                occ, key=lambda x: (x[0], L_CHAR_TO_INT.get(x[1], 99))
+            )
         )
-        val_s = ", ".join(f"{n}{l}" for n, l in sorted(val))
+        val_s = ", ".join(
+            f"{principal_n}{shell}" for principal_n, shell in sorted(val)
+        )
 
         print(f"\n{thin}")
         print(f"  Atom {aidx} : {elem}  (Z = {Z})")
@@ -217,7 +136,7 @@ def analyze_ao_shells(mol):
             shells, key=lambda x: (L_CHAR_TO_INT.get(x[2], 99), x[1])
         )
 
-        ctr = defaultdict(lambda: [0, 0])  # cat -> [n_shells, n_AOs]
+        ctr = _defaultdict(lambda: [0, 0])  # cat -> [n_shells, n_AOs]
 
         for _, n, lc, comps in shells_sorted:
             cat, phys = _classify(n, lc, occ, val)
@@ -248,7 +167,7 @@ def analyze_ao_shells(mol):
     return ctr
 
 
-def generate_ao_shell_markdown(mol, cluster_info=None):
+def _generate_ao_shell_markdown(mol, cluster_info=None):
     """Generate a Markdown-formatted AO Shell Analysis section for the orbital report.
 
     Deduplicates atoms by element symbol, showing one analysis table per
@@ -273,7 +192,7 @@ def generate_ao_shell_markdown(mol, cluster_info=None):
     groups = _group(labels_list)
 
     # Per-atom shell lists
-    by_atom: dict[int, list] = defaultdict(list)
+    by_atom: dict[int, list] = _defaultdict(list)
     atom_elem: dict[int, str] = {}
     for (aidx, elem, n, lc), comps in groups.items():
         by_atom[aidx].append((n, lc, comps))
@@ -292,7 +211,7 @@ def generate_ao_shell_markdown(mol, cluster_info=None):
 
     def _get_proj_weight_target_shells(Z, role):
         """Return valence shells filtered by atom role for proj_weight target."""
-        val = get_valence_shells(Z)
+        val = _get_valence_shells(Z)
         if role == "metal":
             return {(n, lc) for n, lc in val if L_CHAR_TO_INT.get(lc, 0) >= 2}
         else:  # bridging
@@ -325,24 +244,32 @@ def generate_ao_shell_markdown(mol, cluster_info=None):
 
     for aidx, role_key in unique_entries:
         elem = atom_elem.get(aidx, "")
-        Z = ELEMENTS.get(elem, 0)
+        Z = _ELEMENTS.get(elem, 0)
         if Z == 0:
             continue
 
-        occ, cfg, ng = get_electron_config(Z)
-        val = get_valence_shells(Z)
+        occ, cfg, ng = _get_electron_config(Z)
+        val = _get_valence_shells(Z)
 
-        val_s = ", ".join(f"{n}{l}" for n, l in sorted(val))
+        val_s = ", ".join(
+            f"{principal_n}{shell}" for principal_n, shell in sorted(val)
+        )
         ng_display = ng if ng else cfg
 
         # Determine proj_weight target shells based on atom role
         if role_key == "metal":
             target_shells = _get_proj_weight_target_shells(Z, "metal")
-            target_s = ", ".join(f"{n}{l}" for n, l in sorted(target_shells))
+            target_s = ", ".join(
+                f"{principal_n}{shell}"
+                for principal_n, shell in sorted(target_shells)
+            )
             target_note = f" — proj_weight target: {target_s}"
         elif role_key == "bridging":
             target_shells = _get_proj_weight_target_shells(Z, "bridging")
-            target_s = ", ".join(f"{n}{l}" for n, l in sorted(target_shells))
+            target_s = ", ".join(
+                f"{principal_n}{shell}"
+                for principal_n, shell in sorted(target_shells)
+            )
             target_note = f" — proj_weight target: {target_s}"
         else:
             target_shells = set()

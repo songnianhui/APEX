@@ -1,22 +1,43 @@
 # APEX_CAS CAS Settings Template
-# Copy this file, uncomment and modify the fields you need, then run:
-#   apex-cas compute structure.xyz --cas-settings my_settings.yaml
-# All fields have defaults — only override what you need.
+#
+# Copy this file, uncomment the fields you need, and pass it with:
+#   apex-cas prepare <structure.xyz> --case-dir <case_dir> --cas-settings my_settings.yaml
+#   apex-cas scf <structure.xyz> --case-dir <case_dir> --cas-settings my_settings.yaml
+#   apex-cas buildcas <structure.xyz> --case-dir <case_dir> --cas-settings my_settings.yaml
+#   apex-cas compute <structure.xyz> --case-dir <case_dir> --cas-settings my_settings.yaml
+# `compute` remains a convenience wrapper over `scf -> buildcas`; the staged
+# route above is the canonical V1.0 workflow.
+#
+# This template exposes the current YAML controls consumed by:
+#   - apex_cas.main._build_settings()
+#   - shared.models.ComputationSettings
+#   - apex_cas.CAS_builder.build_cas_from_mean_field()
+#   - apex_cas.orbital_visualizer.plot_orbitals()
+#
+# Notes:
+#   - `cas_info.json` now separates:
+#       - `requested_config`: the route/config snapshot requested by the user
+#       - `effective_method`: the route actually executed
+#       - `effective_parameters`: only the parameters that actually affected that route
+#       - `results`: numerical outcomes + generated artifact paths
+#   - The actual orbital selection route used by the chosen CAS pipeline is recorded
+#     separately from the requested route snapshot.
 
-# ── Molecule ───────────────────────────────────────────────────
-# charge: 0                       # total charge
-# spin: 0.0                       # high-spin S for SCF (e.g. 17.5 for S=35/2)
+# ── Molecule / Charge / Spin ───────────────────────────────────
+# charge: 0                       # Total molecular charge.
+# spin: 0.0                       # Target total spin S for the final chemical state.
+# scf_spin: null                  # Optional high-spin SCF reference override as total S.
 
 # ── Preset ─────────────────────────────────────────────────────
 # preset: "default"               # "default" | "fast"
 
-# ── SCF method ─────────────────────────────────────────────────
+# ── SCF Method ─────────────────────────────────────────────────
 # scf_method: "uks"               # "uks" | "uhf"
-# xc_functional: "B3LYP"         # DFT functional
+# xc_functional: "B3LYP"          # e.g. "BP86", "B3LYP", "PBE0"
 
-# ── Basis set ──────────────────────────────────────────────────
-# basis_set_default: "def2-TZVP"  # default basis for elements not listed below
-# basis_per_element:              # per-element override
+# ── Basis Set ──────────────────────────────────────────────────
+# basis_set_default: "def2-TZVP"  # Default basis used unless overridden below.
+# basis_per_element:              # Alias accepted by load_cas_settings_file().
 #   Fe: "def2-TZVP"
 #   Mo: "def2-TZVP"
 #   S:  "def2-TZVP"
@@ -24,22 +45,82 @@
 #   H:  "def2-SVP"
 #   O:  "def2-SVP"
 #   N:  "def2-SVP"
+# basis_set_file: null            # Optional YAML file mapping elements -> basis labels.
 
-# ── Relativistic & Solvation ───────────────────────────────────
-# relativistic: "sf-x2c"         # "none" | "sf-x2c" | "dkh"
-# solvation_model: "ddcosmo"     # "none" | "ddcosmo"
-# solvation_epsilon: 4.0         # dielectric constant
+# ── Relativistic / Solvation ──────────────────────────────────
+# relativistic: "sf-x2c"          # "none" | "sf-x2c" | "dkh"
+# solvation_model: "ddcosmo"      # "none" | "ddcosmo"
+# solvation_epsilon: 4.0          # Dielectric constant when using ddCOSMO.
 
-# ── SCF convergence ────────────────────────────────────────────
-# conv_tol: 1.0e-10               # energy convergence threshold
-# max_cycle: 2000                 # max SCF iterations
-# scf_verbose: 4                  # PySCF verbosity (4 = show iterations)
+# ── SCF Convergence ────────────────────────────────────────────
+# conv_tol: 1.0e-10               # Primary SCF energy convergence threshold.
+# max_cycle: 2000                 # Maximum SCF iterations.
+# scf_verbose: 4                  # PySCF verbosity.
 
-# ── SCF convergence helpers ────────────────────────────────────
-# init_guess: "atom"             # "atom" | "minao" | "huckel" | "vsap"
-# scf_damp: 0.0                  # density damping (0 = off, try 0.1-0.5)
-# scf_level_shift: 0.0           # level shift for virtuals (0 = off, try 0.05-0.3)
-# diis_space: 8                  # number of DIIS vectors
+# ── SCF Stabilization / Runtime Decorators ────────────────────
+# init_guess: "atom"              # "atom" | "minao" | "huckel" | "vsap"
+# scf_damp: 0.0                   # Density damping.
+# scf_level_shift: 0.0            # Virtual-orbital level shift.
+# diis_space: 8                   # Number of DIIS vectors.
+# density_fit: false              # Enable DF / RI approximation.
+# density_fit_auxbasis: null      # Optional auxiliary basis label for DF.
+# density_fit_only_dfj: false     # If true, only J is density-fitted.
+# grids_level: 3                  # DFT integration grid level.
+# grids_small_rho_cutoff: 1.0e-7  # Grid pruning cutoff for small density.
+# grids_prune: "nwchem"           # "nwchem" | "sg1" | "treutler" | "none"
+# frac_occ: false                 # Fractional occupations for difficult SCF cases.
+# smearing_method: "none"         # "none" | "fermi" | "gauss"
+# smearing_sigma: 0.01            # Smearing width when smearing is enabled.
 
-# ── Orbital localization ───────────────────────────────────────
-# localization_method: "pm"      # "pm" | "boys"
+# ── Staged SCF Controls ────────────────────────────────────────
+# scf_stage1_rough: false         # Use the staged rough-SCF helper before final SCF.
+# scf_stage3_newton: false        # Run Newton refinement after standard SCF.
+# newton_max_cycle: 10            # Maximum Newton iterations.
+# newton_conv_tol: 1.0e-10        # Newton refinement convergence threshold.
+# scf_allow_unconverged: false    # Allow downstream continuation if SCF fails to converge.
+
+# ── Localization Controls ──────────────────────────────────────
+# localization_method: "pm"       # Route-level choice: "pm" | "boys"
+#
+# Pipek-Mezey controls:
+# pm_pop_method: "mulliken"       # Population analysis backend for PM.
+# pm_conv_tol: 1.0e-8             # PM convergence threshold.
+# pm_conv_tol_grad: null          # Optional PM gradient threshold.
+# pm_max_cycle: 100               # Max PM iterations.
+# pm_exponent: 2                  # PM exponent.
+# pm_init_guess: "atomic"         # PM initial guess strategy.
+#
+# Boys controls:
+# boys_conv_tol: 1.0e-7           # Boys convergence threshold.
+# boys_conv_tol_grad: null        # Optional Boys gradient threshold.
+# boys_max_cycle: 150             # Max Boys iterations.
+
+# ── CAS-Build Route Controls ───────────────────────────────────
+# cpt_cas_type: "uno"             # "uno" | "uno_type2" | "luo" | "alpha_sl" | "avas"
+# projection_threshold: 0.3       # Used by projection/character-based routes (e.g. alpha_sl, LUO filtering).
+#
+# AVAS-specific controls (used only when cpt_cas_type="avas"):
+# avas_config:
+#   avas_threshold: 0.4
+#   avas_valence_orbitals:
+#     Fe: ["3d", "4s"]
+#     S:  ["3p"]
+
+# ── Visualization / Review Artifacts ───────────────────────────
+# generate_cubes: true            # Emit cube files for the selected review orbitals.
+# cube_grid: "80x80x80"           # Cube grid as "Nx x Ny x Nz".
+# pw_plot_threshold: null         # If set, include orbitals with projection_weight >= threshold and occ >= occ_active_lo.
+# render_png: false               # Generate HTML gallery / PNG-style review bundle from cubes.
+# png_isovalue: 0.05              # Isovalue used in the gallery renderer.
+
+# ── Cluster / Symmetry Metadata Overrides ──────────────────────
+# cluster_info_path: null         # Explicit finalized cluster_info.yaml path; usually inferred from case_dir.
+# symmetry_group: null            # Alias for symmetry_group_override.
+# symmetry_group_override: null   # Explicit point-group label written into cluster metadata.
+# reduction_symmetry: null        # Alias for reduction_symmetry_override.
+# reduction_symmetry_override: null
+# symmetry_detection_mode: "auto" # Alias for symmetry_mode.
+# symmetry_mode: "auto"           # "auto" | "off" | other workflow-defined modes.
+# family_scheme: ""               # Benchmark family/inventory tag.
+# benchmark_profile: ""           # Benchmark profile label for downstream provenance.
+# config_reduction_mode: "none"   # Configuration-reduction mode for later workflow stages.

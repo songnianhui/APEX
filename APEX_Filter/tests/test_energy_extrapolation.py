@@ -8,7 +8,7 @@ import unittest
 
 import numpy as np
 
-from apex_filter.models import ExtrapolatedEnergy
+from shared.models import ExtrapolatedEnergy
 from apex_filter.energy_extrapolation import (
     cc_composite_energy,
     correlation_increment_ratio,
@@ -319,6 +319,3 @@ class TestExtrapolatedEnergyDataclass(unittest.TestCase):
         self.assertAlmostEqual(result.energy, -100.5)
         self.assertAlmostEqual(result.uncertainty, 0.01)
 
-
-if __name__ == "__main__":
-    unittest.main()

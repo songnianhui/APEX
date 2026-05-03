@@ -1,12 +1,12 @@
-"""Tests for selection-file parsing."""
+"""Regression tests for the internal Step 3+ ``--pick`` helper seam."""
 
 import csv
 import json
 
-from apex_filter.pick import apply_pick, parse_pick_arg
+from apex_filter.pick import _apply_pick, _parse_pick_arg
 
 
-def test_apply_pick_file_json_labels(tmp_path):
+def test_internal_pick_helper_reads_json_label_files(tmp_path):
     path = tmp_path / "picks.json"
     with open(path, "w") as f:
         json.dump({"labels": ["B", "A"]}, f)
@@ -16,11 +16,11 @@ def test_apply_pick_file_json_labels(tmp_path):
         {"label": "B", "converged": True},
         {"label": "C", "converged": True},
     ]
-    labels = apply_pick(parse_pick_arg(f"file {path}"), summary)
+    labels = _apply_pick(_parse_pick_arg(f"file {path}"), summary)
     assert labels == ["A", "B"]
 
 
-def test_apply_pick_file_csv_worklist(tmp_path):
+def test_internal_pick_helper_reads_csv_worklists(tmp_path):
     path = tmp_path / "selection_worklist.csv"
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["keep", "label", "family"])
@@ -34,11 +34,11 @@ def test_apply_pick_file_csv_worklist(tmp_path):
         {"label": "B", "converged": True},
         {"label": "C", "converged": True},
     ]
-    labels = apply_pick(parse_pick_arg(f"file {path}"), summary)
+    labels = _apply_pick(_parse_pick_arg(f"file {path}"), summary)
     assert labels == ["B", "C"]
 
 
-def test_apply_pick_file_csv_without_keep_column_uses_all_labels(tmp_path):
+def test_internal_pick_helper_uses_all_labels_when_keep_column_is_absent(tmp_path):
     path = tmp_path / "selection_candidates.csv"
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["label", "family"])
@@ -51,5 +51,5 @@ def test_apply_pick_file_csv_without_keep_column_uses_all_labels(tmp_path):
         {"label": "B", "converged": True},
         {"label": "C", "converged": True},
     ]
-    labels = apply_pick(parse_pick_arg(f"file {path}"), summary)
+    labels = _apply_pick(_parse_pick_arg(f"file {path}"), summary)
     assert labels == ["A", "B"]
