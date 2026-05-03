@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path as _Path
 
+import h5py
 import numpy as np
 from pyscf.tools import fcidump as fcidump_mod
 from scipy.optimize import linear_sum_assignment as _linear_sum_assignment
@@ -496,3 +497,382 @@ def compare_fcidumps(
         "ecore_diff": ecore_diff,
         "match": match,
     }
+
+
+def _compare_vector_entries(vector_ref: np.ndarray, vector_new: np.ndarray) -> dict:
+    """Compare two same-shaped 1D numeric arrays."""
+    ref = np.asarray(vector_ref, dtype=float)
+    new = np.asarray(vector_new, dtype=float)
+    if ref.shape != new.shape:
+        raise ValueError(
+            f"Vector shapes differ: reference {ref.shape}, new {new.shape}"
+        )
+    delta = new - ref
+    return {
+        "shape": ref.shape,
+        "frobenius": float(np.linalg.norm(delta)),
+        "rms": float(np.sqrt(np.mean(delta**2))),
+        "max_abs": float(np.max(np.abs(delta))),
+        "mean_abs": float(np.mean(np.abs(delta))),
+    }
+
+
+def _compare_numeric_array(array_ref: np.ndarray, array_new: np.ndarray) -> dict:
+    """Compare two numeric arrays using the best available structural heuristic."""
+    ref = np.asarray(array_ref)
+    new = np.asarray(array_new)
+    if ref.shape != new.shape:
+        raise ValueError(
+            f"Array shapes differ: reference {ref.shape}, new {new.shape}"
+        )
+
+    if ref.ndim == 1:
+        return {"kind": "vector", "comparison": _compare_vector_entries(ref, new)}
+
+    if ref.ndim == 2:
+        comparison = compare_matrix_entries(ref, new)
+        result = {"kind": "matrix", "comparison": comparison}
+        if ref.shape[0] == ref.shape[1]:
+            is_symmetric = np.allclose(ref, ref.T, atol=1e-8) and np.allclose(
+                new, new.T, atol=1e-8
+            )
+            result["spectrum"] = compare_matrix_spectra(
+                ref,
+                new,
+                hermitian=bool(is_symmetric),
+                descending=True,
+            )
+        return result
+
+    if ref.ndim in (4, 5):
+        return {
+            "kind": "two_particle_tensor",
+            "comparison": compare_two_particle_density_tensors(ref, new),
+        }
+
+    delta = new.astype(float) - ref.astype(float)
+    return {
+        "kind": f"rank{ref.ndim}_array",
+        "comparison": {
+            "shape": ref.shape,
+            "frobenius": float(np.linalg.norm(delta)),
+            "rms": float(np.sqrt(np.mean(delta**2))),
+            "max_abs": float(np.max(np.abs(delta))),
+        },
+    }
+
+
+def _flatten_json_scalars(payload, prefix: str = "") -> dict[str, float | int | str | bool | None]:
+    """Flatten a JSON-like object into scalar leaf paths."""
+    flat: dict[str, float | int | str | bool | None] = {}
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            child = f"{prefix}.{key}" if prefix else str(key)
+            flat.update(_flatten_json_scalars(value, child))
+        return flat
+    if isinstance(payload, list):
+        for idx, value in enumerate(payload):
+            child = f"{prefix}[{idx}]"
+            flat.update(_flatten_json_scalars(value, child))
+        return flat
+    flat[prefix] = payload
+    return flat
+
+
+def _compare_json_payloads(payload_ref, payload_new) -> dict:
+    """Compare two JSON payloads via flattened scalar leaves."""
+    flat_ref = _flatten_json_scalars(payload_ref)
+    flat_new = _flatten_json_scalars(payload_new)
+    keys_ref = set(flat_ref)
+    keys_new = set(flat_new)
+    common = sorted(keys_ref & keys_new)
+
+    numeric_common = []
+    differing_scalars = []
+    matching_scalars = 0
+    for key in common:
+        ref = flat_ref[key]
+        new = flat_new[key]
+        if isinstance(ref, (int, float, bool)) and isinstance(
+            new, (int, float, bool)
+        ):
+            delta = float(new) - float(ref)
+            numeric_common.append((key, float(ref), float(new), delta))
+        elif ref == new:
+            matching_scalars += 1
+        else:
+            differing_scalars.append({"path": key, "ref": ref, "new": new})
+
+    numeric_deltas = np.array([row[3] for row in numeric_common], dtype=float)
+    numeric_summary = None
+    if numeric_common:
+        numeric_summary = {
+            "count": len(numeric_common),
+            "frobenius": float(np.linalg.norm(numeric_deltas)),
+            "rms": float(np.sqrt(np.mean(numeric_deltas**2))),
+            "max_abs": float(np.max(np.abs(numeric_deltas))),
+        }
+
+    return {
+        "kind": "json",
+        "paths_ref": len(flat_ref),
+        "paths_new": len(flat_new),
+        "only_in_ref": sorted(keys_ref - keys_new),
+        "only_in_new": sorted(keys_new - keys_ref),
+        "matching_scalar_count": matching_scalars,
+        "differing_scalar_count": len(differing_scalars),
+        "differing_scalars_preview": differing_scalars[:20],
+        "numeric_summary": numeric_summary,
+    }
+
+
+def _h5_top_groups(h5) -> list[str]:
+    return sorted(h5.keys())
+
+
+def _h5_metadata_attrs(h5) -> dict:
+    if "metadata" not in h5:
+        return {}
+    attrs = {}
+    for key in h5["metadata"].attrs:
+        value = h5["metadata"].attrs[key]
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        attrs[str(key)] = value.item() if hasattr(value, "item") else value
+    return attrs
+
+
+def _infer_h5_kind(h5) -> str:
+    attrs = _h5_metadata_attrs(h5)
+    artifact_type = str(attrs.get("artifact_type", "")) if attrs else ""
+    if artifact_type:
+        return artifact_type
+    if "dmrg_1rdm" in h5 and "noon" in h5:
+        return "apex_cas_testcas_dmrg"
+    if "density_matrices" in h5 and "dm_a" in h5["density_matrices"]:
+        return "apex_filter_step3_uhf_state"
+    if "orbitals" in h5 and "active_coeff_alpha" in h5["orbitals"]:
+        return "apex_filter_step7_dmrg_basis"
+    if "basis_state" in h5 and "density_matrices" in h5 and "2pdm" in h5["density_matrices"]:
+        return "apex_filter_step8_dmrg"
+    return "generic_hdf5"
+
+
+def _compare_step3_uhf_h5(h5_ref, h5_new) -> dict:
+    return {
+        "kind": "apex_filter_step3_uhf_state",
+        "top_groups_ref": _h5_top_groups(h5_ref),
+        "top_groups_new": _h5_top_groups(h5_new),
+        "metadata_ref": _h5_metadata_attrs(h5_ref),
+        "metadata_new": _h5_metadata_attrs(h5_new),
+        "density_matrices": {
+            "dm_a": compare_density_matrices(
+                h5_ref["density_matrices"]["dm_a"][...],
+                h5_new["density_matrices"]["dm_a"][...],
+            ),
+            "dm_b": compare_density_matrices(
+                h5_ref["density_matrices"]["dm_b"][...],
+                h5_new["density_matrices"]["dm_b"][...],
+            ),
+        },
+        "occupations": {
+            "mo_occ_a": _compare_numeric_array(
+                h5_ref["orbitals"]["mo_occ_a"][...],
+                h5_new["orbitals"]["mo_occ_a"][...],
+            ),
+            "mo_occ_b": _compare_numeric_array(
+                h5_ref["orbitals"]["mo_occ_b"][...],
+                h5_new["orbitals"]["mo_occ_b"][...],
+            ),
+        },
+    }
+
+
+def _compare_step7_basis_h5(h5_ref, h5_new) -> dict:
+    orbitals_ref = h5_ref["orbitals"]
+    orbitals_new = h5_new["orbitals"]
+    return {
+        "kind": "apex_filter_step7_dmrg_basis",
+        "top_groups_ref": _h5_top_groups(h5_ref),
+        "top_groups_new": _h5_top_groups(h5_new),
+        "metadata_ref": _h5_metadata_attrs(h5_ref),
+        "metadata_new": _h5_metadata_attrs(h5_new),
+        "basis_state": compare_basis_states(
+            {
+                "active_coeff_alpha": orbitals_ref["active_coeff_alpha"][...],
+                "active_coeff_beta": orbitals_ref["active_coeff_beta"][...],
+                "alpha_no_occupations": orbitals_ref["alpha_no_occupations"][...],
+                "beta_no_occupations": orbitals_ref["beta_no_occupations"][...],
+                "ordering": orbitals_ref["ordering"][...],
+                "pairs": orbitals_ref["pairs"][...],
+            },
+            {
+                "active_coeff_alpha": orbitals_new["active_coeff_alpha"][...],
+                "active_coeff_beta": orbitals_new["active_coeff_beta"][...],
+                "alpha_no_occupations": orbitals_new["alpha_no_occupations"][...],
+                "beta_no_occupations": orbitals_new["beta_no_occupations"][...],
+                "ordering": orbitals_new["ordering"][...],
+                "pairs": orbitals_new["pairs"][...],
+            },
+        ),
+    }
+
+
+def _compare_step8_dmrg_h5(h5_ref, h5_new) -> dict:
+    basis_ref = h5_ref["basis_state"]["orbitals"]
+    basis_new = h5_new["basis_state"]["orbitals"]
+    return {
+        "kind": "apex_filter_step8_dmrg",
+        "top_groups_ref": _h5_top_groups(h5_ref),
+        "top_groups_new": _h5_top_groups(h5_new),
+        "metadata_ref": _h5_metadata_attrs(h5_ref),
+        "metadata_new": _h5_metadata_attrs(h5_new),
+        "basis_state": compare_basis_states(
+            {
+                "active_coeff_alpha": basis_ref["active_coeff_alpha"][...],
+                "active_coeff_beta": basis_ref["active_coeff_beta"][...],
+                "alpha_no_occupations": basis_ref["alpha_no_occupations"][...],
+                "beta_no_occupations": basis_ref["beta_no_occupations"][...],
+                "ordering": basis_ref["ordering"][...],
+                "pairs": basis_ref["pairs"][...],
+            },
+            {
+                "active_coeff_alpha": basis_new["active_coeff_alpha"][...],
+                "active_coeff_beta": basis_new["active_coeff_beta"][...],
+                "alpha_no_occupations": basis_new["alpha_no_occupations"][...],
+                "beta_no_occupations": basis_new["beta_no_occupations"][...],
+                "ordering": basis_new["ordering"][...],
+                "pairs": basis_new["pairs"][...],
+            },
+        ),
+        "two_pdm": compare_two_particle_density_tensors(
+            h5_ref["density_matrices"]["2pdm"][...],
+            h5_new["density_matrices"]["2pdm"][...],
+        ),
+        "discarded_weights": _compare_numeric_array(
+            h5_ref["dmrg_diagnostics"]["discarded_weights"][...],
+            h5_new["dmrg_diagnostics"]["discarded_weights"][...],
+        ),
+    }
+
+
+def _compare_testcas_dmrg_h5(h5_ref, h5_new) -> dict:
+    result = {
+        "kind": "apex_cas_testcas_dmrg",
+        "top_groups_ref": _h5_top_groups(h5_ref),
+        "top_groups_new": _h5_top_groups(h5_new),
+        "metadata_ref": _h5_metadata_attrs(h5_ref),
+        "metadata_new": _h5_metadata_attrs(h5_new),
+        "dmrg_1rdm": compare_density_matrices(
+            h5_ref["dmrg_1rdm"][...],
+            h5_new["dmrg_1rdm"][...],
+        ),
+    }
+    if "noon" in h5_ref and "noon" in h5_new:
+        result["noon"] = _compare_numeric_array(h5_ref["noon"][...], h5_new["noon"][...])
+    return result
+
+
+def _compare_generic_hdf5(h5_ref, h5_new) -> dict:
+    groups_ref = _h5_top_groups(h5_ref)
+    groups_new = _h5_top_groups(h5_new)
+    return {
+        "kind": "generic_hdf5",
+        "top_groups_ref": groups_ref,
+        "top_groups_new": groups_new,
+        "only_in_ref": sorted(set(groups_ref) - set(groups_new)),
+        "only_in_new": sorted(set(groups_new) - set(groups_ref)),
+        "metadata_ref": _h5_metadata_attrs(h5_ref),
+        "metadata_new": _h5_metadata_attrs(h5_new),
+    }
+
+
+def _compare_hdf5_artifacts(path_ref: str, path_new: str) -> dict:
+    with h5py.File(path_ref, "r") as h5_ref, h5py.File(path_new, "r") as h5_new:
+        kind_ref = _infer_h5_kind(h5_ref)
+        kind_new = _infer_h5_kind(h5_new)
+        if kind_ref != kind_new:
+            raise ValueError(
+                f"HDF5 artifact kinds differ: reference {kind_ref!r}, new {kind_new!r}"
+            )
+        if kind_ref == "apex_filter_step3_uhf_state":
+            return _compare_step3_uhf_h5(h5_ref, h5_new)
+        if kind_ref == "apex_filter_step7_dmrg_basis":
+            return _compare_step7_basis_h5(h5_ref, h5_new)
+        if kind_ref == "apex_filter_step8_dmrg":
+            return _compare_step8_dmrg_h5(h5_ref, h5_new)
+        if kind_ref == "apex_cas_testcas_dmrg":
+            return _compare_testcas_dmrg_h5(h5_ref, h5_new)
+        return _compare_generic_hdf5(h5_ref, h5_new)
+
+
+def _compare_npz_artifacts(path_ref: str, path_new: str) -> dict:
+    with np.load(path_ref, allow_pickle=False) as npz_ref, np.load(
+        path_new, allow_pickle=False
+    ) as npz_new:
+        keys_ref = set(npz_ref.files)
+        keys_new = set(npz_new.files)
+        common = sorted(keys_ref & keys_new)
+        arrays = {}
+        for key in common:
+            arrays[key] = _compare_numeric_array(npz_ref[key], npz_new[key])
+        return {
+            "kind": "npz",
+            "keys_ref": sorted(keys_ref),
+            "keys_new": sorted(keys_new),
+            "only_in_ref": sorted(keys_ref - keys_new),
+            "only_in_new": sorted(keys_new - keys_ref),
+            "arrays": arrays,
+        }
+
+
+def _compare_json_artifacts(path_ref: str, path_new: str) -> dict:
+    return _compare_json_payloads(
+        json.loads(_Path(path_ref).read_text()),
+        json.loads(_Path(path_new).read_text()),
+    )
+
+
+def _is_fcidump_path(path: _Path) -> bool:
+    name = path.name
+    if name.startswith("FCIDUMP"):
+        return True
+    if path.suffix == ".FCIDUMP":
+        return True
+    try:
+        first_line = path.read_text(encoding="utf-8", errors="ignore").splitlines()[:1]
+    except Exception:
+        return False
+    return bool(first_line and ("&FCI" in first_line[0] or "NORB" in first_line[0]))
+
+
+def compare_artifacts(path_ref: str, path_new: str) -> dict:
+    """Compare two retained artifacts through a type-aware shared entry point."""
+    ref = _Path(path_ref)
+    new = _Path(path_new)
+    if not ref.exists():
+        raise FileNotFoundError(f"Reference artifact not found: {ref}")
+    if not new.exists():
+        raise FileNotFoundError(f"New artifact not found: {new}")
+
+    if _is_fcidump_path(ref) and _is_fcidump_path(new):
+        result = compare_fcidumps(str(ref), str(new))
+        result["kind"] = "fcidump"
+        return result
+
+    suffix_ref = ref.suffix.lower()
+    suffix_new = new.suffix.lower()
+    if suffix_ref != suffix_new:
+        raise ValueError(
+            f"Artifact suffixes differ: reference {suffix_ref!r}, new {suffix_new!r}"
+        )
+    if suffix_ref in {".h5", ".hdf5"}:
+        return _compare_hdf5_artifacts(str(ref), str(new))
+    if suffix_ref == ".npz":
+        return _compare_npz_artifacts(str(ref), str(new))
+    if suffix_ref == ".json":
+        return _compare_json_artifacts(str(ref), str(new))
+
+    raise ValueError(
+        f"Unsupported artifact type for compare_artifacts: {ref.name} vs {new.name}"
+    )

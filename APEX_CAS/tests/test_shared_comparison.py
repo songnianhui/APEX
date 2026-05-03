@@ -8,6 +8,7 @@ import numpy as np
 from pyscf.tools import fcidump as fcidump_mod
 
 from shared.comparison import (
+    compare_artifacts,
     compare_basis_states,
     compare_density_matrices,
     compare_fcidumps,
@@ -264,3 +265,30 @@ def test_compare_two_particle_density_tensors_supports_rank5_block_layout():
         component["pair_matrix"]["spectrum"]["eigenvalue_max_abs"] < 1e-10
         for component in result["components"]
     )
+
+
+def test_compare_artifacts_infers_fcidump_kind(tmp_path):
+    h1 = np.array([[1.0, 0.1], [0.1, 0.8]])
+    h2 = np.zeros((2, 2, 2, 2))
+    ref_path = tmp_path / "ref.FCIDUMP"
+    new_path = tmp_path / "new.FCIDUMP"
+    fcidump_mod.from_integrals(str(ref_path), h1, h2, 2, 2, nuc=-10.0, ms=0)
+    fcidump_mod.from_integrals(str(new_path), h1, h2, 2, 2, nuc=-10.0, ms=0)
+
+    result = compare_artifacts(str(ref_path), str(new_path))
+
+    assert result["kind"] == "fcidump"
+    assert result["match"] is True
+
+
+def test_compare_artifacts_supports_json_payloads(tmp_path):
+    ref = tmp_path / "ref.json"
+    new = tmp_path / "new.json"
+    ref.write_text(json.dumps({"energy": -1.0, "flags": {"converged": True}}))
+    new.write_text(json.dumps({"energy": -1.1, "flags": {"converged": True}}))
+
+    result = compare_artifacts(str(ref), str(new))
+
+    assert result["kind"] == "json"
+    assert result["paths_ref"] == result["paths_new"]
+    assert abs(result["numeric_summary"]["max_abs"] - 0.1) < 1e-12

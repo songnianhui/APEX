@@ -32,6 +32,7 @@ def _public_runtime_callables(module_name: str) -> set[str]:
 def test_shared_modules_only_define_intended_public_top_level_names():
     expected = {
         REPO_ROOT / "shared" / "comparison.py": {
+            "compare_artifacts",
             "compare_matrix_entries",
             "compare_matrix_spectra",
             "compare_density_matrices",
@@ -113,6 +114,7 @@ def test_shared_modules_only_define_intended_public_top_level_names():
 def test_shared_runtime_surfaces_stay_minimal():
     expected = {
         "shared.comparison": {
+            "compare_artifacts",
             "compare_matrix_entries",
             "compare_matrix_spectra",
             "compare_density_matrices",

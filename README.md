@@ -21,6 +21,10 @@ load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> ext
 This production mainline is compute-only. Validation-side comparison and
 analysis are intentionally kept separate from the runtime computation path.
 
+Standalone compare tooling is documented in:
+
+- [docs/compare.md](/Users/snh/Projects/APEX/docs/compare.md)
+
 For the maintained Fe2S2 walkthrough, see:
 
 - [docs/example.md](/Users/snh/Projects/APEX/docs/example.md)

@@ -22,6 +22,10 @@ load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> ext
 
 这条 production mainline 只负责计算。验证侧 compare、分析以及矩阵/张量比对都属于独立工作流，不会在运行主线时自动调用。
 
+独立 compare 工具的说明文档位于：
+
+- [docs/compare.md](/Users/snh/Projects/APEX/docs/compare.md)
+
 对于维护中的 Fe2S2 主线示例，请优先参考：
 
 - [docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
