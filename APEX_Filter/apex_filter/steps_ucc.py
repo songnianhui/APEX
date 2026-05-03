@@ -1,19 +1,19 @@
-"""UCC screening steps for the interactive APEX_Filter pipeline."""
+"""Step 4-6 UCC screening entrypoints for the staged APEX_Filter workflow."""
 
 import json
 import logging
 import os
-from pathlib import Path
+from pathlib import Path as _Path
 
-import yaml
-
-from shared.apex_cas_provenance import load_apex_cas_provenance
-from shared.artifact_paths import resolve_cluster_info_path, resolve_structure_path
-from .pick import apply_pick, parse_pick_arg
-from .reference_hast_ucc import run_reference_hast_ucc, save_reference_hast_result
-from .reference_ucc import run_reference_ucc, save_reference_ucc_result
-from .selection_guidance import attach_display_labels, build_display_label_map, write_selection_artifacts
-from .session import SessionManager
+from ._case_artifacts import (
+    _build_case_observable_inputs,
+    _preferred_step3_state_path,
+)
+from .pick import _apply_pick, _parse_pick_arg
+from .reference_hast_ucc import _save_reference_hast_result, run_reference_hast_ucc as _run_reference_hast_ucc
+from .reference_ucc import _save_reference_ucc_result, run_reference_ucc as _run_reference_ucc
+from .selection_guidance import _attach_display_labels, _build_display_label_map, _write_selection_artifacts
+from .session import SessionManager as _SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,63 +44,10 @@ _CCSDT_DEFAULTS = {
 }
 
 
-def _preferred_step3_state_path(uhf_dir: str, safe_label: str) -> str:
-    h5_path = os.path.join(uhf_dir, f"{safe_label}_uhf.h5")
-    if os.path.isfile(h5_path):
-        return h5_path
-    return os.path.join(uhf_dir, f"{safe_label}_uhf.npz")
-
-
-def _resolve_case_dir_from_fcidump_path(fcidump_path: str) -> str:
-    return str(Path(fcidump_path).resolve().parents[2])
-
-
-def _resolve_cas_settings_path(case_dir: str) -> str | None:
-    inputs_dir = os.path.join(case_dir, "inputs")
-    if not os.path.isdir(inputs_dir):
-        return None
-    matches = [
-        os.path.join(inputs_dir, name)
-        for name in sorted(os.listdir(inputs_dir))
-        if name.endswith("_cas_settings.yaml") or name == "cas_settings.yaml"
-    ]
-    if len(matches) == 1:
-        return os.path.abspath(matches[0])
-    return None
-
-
-def _resolve_cas_data_h5_path(case_dir: str) -> str | None:
-    provenance = load_apex_cas_provenance(case_dir)
-    stem = provenance.get("stem", "")
-    if not stem:
-        return None
-    path = os.path.join(case_dir, "outputs", "orbitals", f"{stem}_cas_data.h5")
-    return os.path.abspath(path) if os.path.isfile(path) else None
-
-
-def _build_ucc_observable_inputs(state: dict, cfg) -> dict | None:
-    config_path = state.get("config_path")
-    if not config_path or not os.path.isfile(config_path):
-        return None
-    config_raw = yaml.safe_load(Path(config_path).read_text()) or {}
-    case_dir = _resolve_case_dir_from_fcidump_path(state["fcidump_path"])
-    config_dir = os.path.dirname(os.path.abspath(config_path))
-    xyz_path = resolve_structure_path(config_raw, case_dir)
-    cluster_info_path = resolve_cluster_info_path(config_raw, case_dir, config_dir)
-    cas_settings_path = _resolve_cas_settings_path(case_dir)
-    cas_data_h5_path = _resolve_cas_data_h5_path(case_dir)
-    if not all([xyz_path, cluster_info_path, cas_settings_path, cas_data_h5_path]):
-        return None
-    return {
-        "xyz_path": xyz_path,
-        "cluster_info_path": cluster_info_path,
-        "cas_settings_path": cas_settings_path,
-        "cas_data_h5_path": cas_data_h5_path,
-        "chan_benchmark_json": config_raw.get("chan_benchmark_json"),
-        "label": cfg.label,
-        "family": cfg.spin_isomer.family if cfg.spin_isomer else "",
-    }
-
+def _warn_ignored_active_space_basis_set(basis_set: str) -> None:
+    """Explain that AO-basis overrides are record-only on the FCIDUMP route."""
+    if basis_set != "cc-pVDZ":
+        print(f"  NOTE: ignoring --basis-set={basis_set} on the active-space FCIDUMP route")
 
 def _run_active_space_ucc_batch(
     selected_configs,
@@ -123,21 +70,21 @@ def _run_active_space_ucc_batch(
         uhf_npz = _preferred_step3_state_path(uhf_dir, label)
         result_npz = os.path.join(level_dir, f"{label}{suffix}")
         result_json = os.path.join(level_dir, f"{label}_post_scf_observables.json")
-        observable_inputs = _build_ucc_observable_inputs(state, cfg)
+        observable_inputs = _build_case_observable_inputs(state, cfg)
         if observable_inputs is not None:
             observable_inputs["theory"] = "UCCSD(T)" if run_triples else "UCCSD"
 
         print(f"  [{idx}/{len(selected_configs)}] {cfg.label} ... ", end="", flush=True)
         try:
-            result = run_reference_ucc(
+            result = _run_reference_ucc(
                 fcidump_data,
                 uhf_npz,
                 run_triples=run_triples,
                 observable_inputs=observable_inputs,
             )
-            save_reference_ucc_result(result, result_npz)
+            _save_reference_ucc_result(result, result_npz)
             if result.post_scf_observables is not None:
-                Path(result_json).write_text(
+                _Path(result_json).write_text(
                     json.dumps(result.post_scf_observables, indent=2, ensure_ascii=False) + "\n"
                 )
             status = "OK" if result.converged else "NOT CONVERGED"
@@ -194,7 +141,7 @@ def _select_configs_for_step(configs, selected_labels):
 
 def step_ccsd(session_dir: str, *, pick: str = "all", code: str = "pyscf", basis_set: str = "cc-pVDZ"):
     """Run CCSD for selected configurations."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step4_ccsd", "step3_uhf")
     controls = sm.resolve_method_controls(
         "ccsd",
@@ -208,34 +155,33 @@ def step_ccsd(session_dir: str, *, pick: str = "all", code: str = "pyscf", basis
 
     state = sm.load_load_state()
     enum_data = sm.load_enumeration()
-    uhf_summary = sm.load_uhf_summary()
-    display_label_map = build_display_label_map(uhf_summary)
+    uhf_summary = sm.load_step_summary("step3_uhf", "uhf_summary.json")
+    display_label_map = _build_display_label_map(uhf_summary)
 
     fcid = state["fcidump_data"]
     configs = enum_data["configs"]
 
-    pick_spec = parse_pick_arg(pick)
-    selected_labels = apply_pick(pick_spec, uhf_summary)
+    pick_spec = _parse_pick_arg(pick)
+    selected_labels = _apply_pick(pick_spec, uhf_summary)
 
     print("=" * 60)
     print(f"Step 4: CCSD ({len(selected_labels)} configs)")
     print("=" * 60)
     print(f"  Pick strategy: {pick}")
     print(f"  Code: {code}")
-    if basis_set != "cc-pVDZ":
-        print(f"  NOTE: ignoring --basis-set={basis_set} on the active-space FCIDUMP route")
+    _warn_ignored_active_space_basis_set(basis_set)
     print("  Route: active-space Hamiltonian via FCIDUMP + saved step3 reference UHF")
 
     selected_configs = _select_configs_for_step(configs, selected_labels)
 
-    sm.save_ccsd_picked(selected_labels)
+    sm.save_step_picked("step4_ccsd", selected_labels)
 
     if not selected_configs:
         print("  No configs selected. Aborting.")
-        sm.save_ccsd_summary([])
+        sm.save_step_summary("step4_ccsd", "ccsd_summary.json", [])
         return
 
-    level_dir = sm.ccsd_scripts_dir
+    level_dir = sm.step_artifact_dir("step4_ccsd", "scripts")
     uhf_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
     results = _run_active_space_ucc_batch(
         selected_configs,
@@ -246,13 +192,13 @@ def step_ccsd(session_dir: str, *, pick: str = "all", code: str = "pyscf", basis
         display_label_map=display_label_map,
         run_triples=False,
     )
-    attach_display_labels(results, uhf_summary)
+    _attach_display_labels(results, uhf_summary)
     n_converged = sum(1 for r in results if r.get("converged"))
     print(f"  Parsed {len(results)} results ({n_converged} converged)")
-    results = sm.rebuild_ccsd_summary(configs, uhf_summary, current_results=results)
-    attach_display_labels(results, uhf_summary)
-    sm.save_ccsd_summary(results)
-    write_selection_artifacts(
+    results = sm._rebuild_ccsd_summary(configs, uhf_summary, current_results=results)
+    _attach_display_labels(results, uhf_summary)
+    sm.save_step_summary("step4_ccsd", "ccsd_summary.json", results)
+    _write_selection_artifacts(
         os.path.join(sm.session_dir, "step4_ccsd"),
         step_name="Step 4 CCSD",
         next_step_name="ccsd-t",
@@ -271,7 +217,7 @@ def step_ccsd_t(
     n_final: int = 5,
 ):
     """Run CCSD(T) for selected configurations and produce final ranking."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step5_ccsd_t", "step4_ccsd")
     controls = sm.resolve_method_controls(
         "ccsd_t",
@@ -286,14 +232,14 @@ def step_ccsd_t(
 
     state = sm.load_load_state()
     enum_data = sm.load_enumeration()
-    ccsd_summary = sm.load_ccsd_summary()
-    display_label_map = build_display_label_map(ccsd_summary)
+    ccsd_summary = sm.load_step_summary("step4_ccsd", "ccsd_summary.json")
+    display_label_map = _build_display_label_map(ccsd_summary)
 
     fcid = state["fcidump_data"]
     configs = enum_data["configs"]
 
-    pick_spec = parse_pick_arg(pick)
-    selected_labels = apply_pick(pick_spec, ccsd_summary)
+    pick_spec = _parse_pick_arg(pick)
+    selected_labels = _apply_pick(pick_spec, ccsd_summary)
 
     print("=" * 60)
     print(f"Step 5: CCSD(T) ({len(selected_labels)} configs)")
@@ -301,20 +247,19 @@ def step_ccsd_t(
     print(f"  Pick strategy: {pick}")
     print(f"  Code: {code}")
     print(f"  n_final: {n_final}")
-    if basis_set != "cc-pVDZ":
-        print(f"  NOTE: ignoring --basis-set={basis_set} on the active-space FCIDUMP route")
+    _warn_ignored_active_space_basis_set(basis_set)
     print("  Route: active-space Hamiltonian via FCIDUMP + saved step3 reference UHF")
 
     selected_configs = _select_configs_for_step(configs, selected_labels)
 
-    sm.save_ccsd_t_picked(selected_labels)
+    sm.save_step_picked("step5_ccsd_t", selected_labels)
 
     if not selected_configs:
         print("  No configs selected. Aborting.")
-        sm.save_ccsd_t_summary([])
+        sm.save_step_summary("step5_ccsd_t", "ccsd_t_summary.json", [])
         return
 
-    level_dir = sm.ccsd_t_scripts_dir
+    level_dir = sm.step_artifact_dir("step5_ccsd_t", "scripts")
     uhf_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
     results = _run_active_space_ucc_batch(
         selected_configs,
@@ -325,7 +270,7 @@ def step_ccsd_t(
         display_label_map=display_label_map,
         run_triples=True,
     )
-    attach_display_labels(results, ccsd_summary)
+    _attach_display_labels(results, ccsd_summary)
     n_converged = sum(1 for r in results if r.get("converged"))
 
     final = results[:n_final]
@@ -340,8 +285,8 @@ def step_ccsd_t(
         print(f"  #{rank:3d}  E = {e_str}  [{conv_str}]  {r.get('display_label', r['label'])}")
     print("=" * 70)
 
-    sm.save_ccsd_t_summary(results)
-    write_selection_artifacts(
+    sm.save_step_summary("step5_ccsd_t", "ccsd_t_summary.json", results)
+    _write_selection_artifacts(
         sm._step_dir("step5_ccsd_t"),
         step_name="Step 5 CCSD(T)",
         next_step_name="ccsdt",
@@ -369,7 +314,7 @@ def step_ccsdt(
     newton_krylov: bool = False,
 ):
     """Run HAST-UCC CCSDT for selected configurations on the FCIDUMP Hamiltonian."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step6_ccsdt", "step5_ccsd_t")
     controls = sm.resolve_method_controls(
         "ccsdt",
@@ -406,14 +351,14 @@ def step_ccsdt(
 
     state = sm.load_load_state()
     enum_data = sm.load_enumeration()
-    ccsd_t_summary = sm.load_ccsd_t_summary()
-    display_label_map = build_display_label_map(ccsd_t_summary)
+    ccsd_t_summary = sm.load_step_summary("step5_ccsd_t", "ccsd_t_summary.json")
+    display_label_map = _build_display_label_map(ccsd_t_summary)
 
     fcid = state["fcidump_data"]
     configs = enum_data["configs"]
 
-    pick_spec = parse_pick_arg(pick)
-    selected_labels = apply_pick(pick_spec, ccsd_t_summary)
+    pick_spec = _parse_pick_arg(pick)
+    selected_labels = _apply_pick(pick_spec, ccsd_t_summary)
 
     print("=" * 60)
     print(f"Step 6: CCSDT ({len(selected_labels)} configs)")
@@ -429,19 +374,18 @@ def step_ccsdt(
     print(f"  iterative_damping = {iterative_damping:g}")
     print(f"  level_shift = {level_shift:g}")
     print(f"  newton_krylov = {newton_krylov}")
-    if basis_set != "cc-pVDZ":
-        print(f"  NOTE: ignoring --basis-set={basis_set} on the active-space FCIDUMP route")
+    _warn_ignored_active_space_basis_set(basis_set)
     print("  Route: active-space Hamiltonian via FCIDUMP + saved step3 reference UHF")
 
     selected_configs = _select_configs_for_step(configs, selected_labels)
-    sm.save_ccsdt_picked(selected_labels)
+    sm.save_step_picked("step6_ccsdt", selected_labels)
 
     if not selected_configs:
         print("  No configs selected. Aborting.")
-        sm.save_ccsdt_summary([])
+        sm.save_step_summary("step6_ccsdt", "ccsdt_summary.json", [])
         return
 
-    level_dir = sm.ccsdt_scripts_dir
+    level_dir = sm.step_artifact_dir("step6_ccsdt", "scripts")
     uhf_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
     os.makedirs(level_dir, exist_ok=True)
     results = []
@@ -450,12 +394,12 @@ def step_ccsdt(
         uhf_npz = _preferred_step3_state_path(uhf_dir, label)
         result_npz = os.path.join(level_dir, f"{label}_ccsdt_results.npz")
         result_json = os.path.join(level_dir, f"{label}_post_scf_observables.json")
-        observable_inputs = _build_ucc_observable_inputs(state, cfg)
+        observable_inputs = _build_case_observable_inputs(state, cfg)
         if observable_inputs is not None:
             observable_inputs["theory"] = "UCCSDT"
         print(f"  [{idx}/{len(selected_configs)}] {cfg.label} ... ", end="", flush=True)
         try:
-            result = run_reference_hast_ucc(
+            result = _run_reference_hast_ucc(
                 fcid,
                 uhf_npz,
                 t_order=3,
@@ -470,9 +414,29 @@ def step_ccsdt(
                 newton_krylov=newton_krylov,
                 observable_inputs=observable_inputs,
             )
-            save_reference_hast_result(result, result_npz)
+            _save_reference_hast_result(
+                result,
+                result_npz,
+                label=cfg.label,
+                family=cfg.spin_isomer.family if cfg.spin_isomer else "",
+                settings_payload=sm._build_step_settings_payload(
+                    None,
+                    theory="UCCSDT",
+                    code=code,
+                    basis_set=basis_set,
+                    conv_tol=conv_tol,
+                    residual_tol=residual_tol,
+                    max_cycle=max_cycle,
+                    lambda_max_cycle=lambda_max_cycle,
+                    diis_space=diis_space,
+                    diis_start_cycle=diis_start_cycle,
+                    iterative_damping=iterative_damping,
+                    level_shift=level_shift,
+                    newton_krylov=newton_krylov,
+                ),
+            )
             if result.post_scf_observables is not None:
-                Path(result_json).write_text(
+                _Path(result_json).write_text(
                     json.dumps(result.post_scf_observables, indent=2, ensure_ascii=False) + "\n"
                 )
             status = "OK" if result.converged else "NOT CONVERGED"
@@ -520,7 +484,7 @@ def step_ccsdt(
             )
 
     results.sort(key=lambda r: r.get("energy") or float("inf"))
-    attach_display_labels(results, ccsd_t_summary)
+    _attach_display_labels(results, ccsd_t_summary)
     n_converged = sum(1 for r in results if r.get("converged"))
     final = results[:n_final]
 
@@ -534,8 +498,8 @@ def step_ccsdt(
         print(f"  #{rank:3d}  E = {e_str}  [{conv_str}]  {r.get('display_label', r['label'])}")
     print("=" * 70)
 
-    sm.save_ccsdt_summary(results)
-    write_selection_artifacts(
+    sm.save_step_summary("step6_ccsdt", "ccsdt_summary.json", results)
+    _write_selection_artifacts(
         os.path.join(sm.session_dir, "step6_ccsdt"),
         step_name="Step 6 CCSDT",
         next_step_name="dmrg-basis",

@@ -1,33 +1,46 @@
 """Reference-state UHF on the active-space Hamiltonian defined by FCIDUMP.
 
-Implements broken-symmetry UHF directly on the active-space integrals,
-following the Chan 2026 workflow where all calculations (UHF, UCCSD, etc.)
-are performed within the active space defined by the FCIDUMP.
+This module anchors the canonical Step 3 route where broken-symmetry UHF is
+solved directly on the active-space Hamiltonian rather than on the full
+molecule. The intentional public surface here is:
 
-Key difference from full-molecule UHF:
-- Uses FCIDUMP one- and two-electron integrals as the "AO" integrals
-- Orbital basis = FCIDUMP active-space MO basis (already orthogonal)
-- BS initial guess built by manipulating MO occupations (not AO blocks)
-- Orbital character from CAS.orbital_labels determines metal-localized MOs
+- ``converge_reference_uhf(...)`` for Step 3 orchestration
+
+All remaining helpers should be read as internal workflow support for initial
+guesses, label interpretation, and broken-symmetry bookkeeping. Fake-molecule
+and reference-UHF construction live in ``shared.active_space_reference`` and
+are imported here only as internal workflow seams.
 """
 
 import logging
-import re
-from dataclasses import dataclass
+from dataclasses import dataclass as _dataclass
 
 import numpy as np
 
-from shared.cluster_info_labels import resolve_metal_site_label
+from shared.active_space_reference import (
+    _sanitize_ms2_for_nelec,
+    build_fake_mol as _build_fake_mol,
+    build_reference_uhf_solver as _build_reference_uhf_solver,
+)
+from shared.chem_knowledge import (
+    get_common_oxidation_states as _get_common_oxidation_states,
+    get_local_spin as _get_local_spin,
+)
+from shared.cluster_info_labels import resolve_metal_site_label as _resolve_metal_site_label
+from shared.final_state_signatures import (
+    parse_orbital_metal_mapping as _parse_orbital_metal_mapping,
+    summarize_final_state_from_dm as _summarize_final_state_from_dm,
+)
 
-from .models import CAS, ClusterInfo, ElectronicConfig
+from shared.models import CAS as _CAS, ClusterInfo as _ClusterInfo, ElectronicConfig as _ElectronicConfig
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ReferenceUHFResult:
+@_dataclass
+class _ReferenceUHFResult:
     """Result of a reference-state UHF calculation in the active space."""
-    config: ElectronicConfig
+    config: _ElectronicConfig
     energy: float
     converged: bool
     s_squared: float
@@ -38,136 +51,9 @@ class ReferenceUHFResult:
     diagnostics: dict | None = None
 
 
-def build_fake_mol(norb: int, nelec: int, ms2: int, ecore: float = 0.0):
-    """Build a minimal PySCF Mole for active-space calculations.
-
-    The "fake" mol provides the electron count and spin multiplicity
-    needed by PySCF's SCF solvers, without requiring real atomic structure.
-
-    Parameters
-    ----------
-    norb : int
-        Number of active-space orbitals.
-    nelec : int
-        Number of active-space electrons.
-    ms2 : int
-        2 * Sz for the reference state.
-
-    Returns
-    -------
-    pyscf.gto.Mole
-    """
-    from pyscf import gto
-
-    mol = gto.M()
-    mol.nelectron = nelec
-    mol.spin = _sanitize_ms2_for_nelec(nelec, ms2)
-    mol.incore_anyway = True
-    # Override nao_nr to return norb
-    mol._nao_nr = norb
-
-    # Build a minimal real molecule so PySCF internals have a valid basis
-    # object. The actual one-/two-electron integrals are overridden below,
-    # so this atom/basis choice is only a container for SCF machinery.
-    mol.atom = [["H", (0.0, 0.0, 0.0)]]
-    mol.basis = "sto-3g"
-    mol.build(False, False)
-
-    # Patch nao_nr after build
-    mol.nao_nr = lambda *args, **kwargs: norb
-    mol.nao = norb
-    mol.energy_nuc = lambda *args, **kwargs: float(ecore)
-
-    return mol
-
-
-def build_reference_uhf_solver(fcidump_data, mol_fake, conv_tol=1e-8, max_cycle=2000):
-    """Build a PySCF UHF object that uses FCIDUMP integrals.
-
-    Parameters
-    ----------
-    fcidump_data : FCIDUMPData
-        Parsed FCIDUMP with h1e, h2e integrals.
-    mol_fake : pyscf.gto.Mole
-        Fake mol from build_fake_mol().
-    conv_tol : float
-        SCF convergence tolerance.
-    max_cycle : int
-        Maximum SCF iterations.
-
-    Returns
-    -------
-    pyscf.scf.UHF
-    """
-    from pyscf import ao2mo, scf
-
-    norb = fcidump_data.norb
-    h1e = fcidump_data.h1e
-    h2e = fcidump_data.h2e
-
-    mf = scf.UHF(mol_fake)
-    mf.conv_tol = conv_tol
-    mf.max_cycle = max_cycle
-
-    # Override integral getters
-    mf.get_hcore = lambda *args, **kwargs: h1e.copy()
-    mf.get_ovlp = lambda *args, **kwargs: np.eye(norb)
-    mf.get_init_guess = lambda *args, **kwargs: _build_default_init_guess(mol_fake, norb)
-
-    # Store two-electron integrals in PySCF's internal packed format
-    if h2e.ndim == 4:
-        mf._eri = ao2mo.restore(8, h2e, norb)
-    elif h2e.ndim == 2:
-        mf._eri = h2e
-    elif h2e.ndim == 1:
-        mf._eri = h2e
-    else:
-        mf._eri = ao2mo.restore(8, h2e, norb)
-
-    return mf
-
-
-def parse_orbital_metal_mapping(cas: CAS, cluster_info: ClusterInfo) -> dict:
-    """Map active-space orbital indices to metal site indices.
-
-    Parses CAS.orbital_labels to determine which spin-carrying metal
-    d orbital each active orbital belongs to.
-
-    Parameters
-    ----------
-    cas : CAS
-        Active space with orbital_labels like "Fe1_3d_xy", "S2_3p_x".
-    cluster_info : ClusterInfo
-        Cluster with metal centers.
-
-    Returns
-    -------
-    dict
-        {orb_idx: metal_site_idx} for metal d-like orbitals that should
-        participate in the broken-symmetry spin pattern.
-        Non-d metal orbitals and non-metal orbitals map to None.
-    """
-    if not cas.orbital_labels:
-        return {}
-
-    metal_label_map = _build_metal_label_map(cluster_info)
-    metal_elements = {}
-    for i, metal in enumerate(cluster_info.metals):
-        metal_elements.setdefault(metal.element, []).append(i)
-
-    mapping = {}
-    for orb_idx, label in enumerate(cas.orbital_labels):
-        metal_site = _parse_label_to_metal_site(label, metal_label_map, metal_elements)
-        if metal_site is not None and not _is_spin_carrying_metal_orbital(label):
-            metal_site = None
-        mapping[orb_idx] = metal_site
-
-    return mapping
-
-
-def build_bs_initial_guess_active_space(
-    cas: CAS,
-    config: ElectronicConfig,
+def _build_bs_initial_guess_active_space(
+    cas: _CAS,
+    config: _ElectronicConfig,
     fcidump_data,
     metal_orbital_map: dict,
 ) -> tuple:
@@ -189,7 +75,7 @@ def build_bs_initial_guess_active_space(
     fcidump_data : FCIDUMPData
         Integral data (norb used for matrix dimensions).
     metal_orbital_map : dict
-        {orb_idx: metal_site_idx} from parse_orbital_metal_mapping.
+        {orb_idx: metal_site_idx} from _parse_orbital_metal_mapping.
 
     Returns
     -------
@@ -244,10 +130,10 @@ def build_bs_initial_guess_active_space(
 
 
 def converge_reference_uhf(
-    cas: CAS,
-    config: ElectronicConfig,
+    cas: _CAS,
+    config: _ElectronicConfig,
     fcidump_data,
-    cluster_info: ClusterInfo,
+    cluster_info: _ClusterInfo,
     *,
     conv_tol: float = 1e-8,
     max_cycle: int = 2000,
@@ -256,7 +142,7 @@ def converge_reference_uhf(
     damp: float = 0.2,
     newton_refine: bool = False,
     newton_max_cycle: int = 8,
-) -> ReferenceUHFResult:
+) -> _ReferenceUHFResult:
     """Run BS-UHF within the active space.
 
     Steps:
@@ -294,7 +180,7 @@ def converge_reference_uhf(
 
     Returns
     -------
-    ReferenceUHFResult
+    _ReferenceUHFResult
     """
     norb = fcidump_data.norb
     nelec = fcidump_data.nelec
@@ -303,9 +189,9 @@ def converge_reference_uhf(
     ms2_highspin = _sanitize_ms2_for_nelec(nelec, ms2_highspin)
 
     try:
-        from pyscf import scf
+        import pyscf  # noqa: F401
     except ImportError:
-        return ReferenceUHFResult(
+        return _ReferenceUHFResult(
             config=config, energy=0.0, converged=False,
             s_squared=0.0, mo_coeff=(None, None), mo_energy=(None, None),
             dm=(None, None),
@@ -313,7 +199,7 @@ def converge_reference_uhf(
         )
 
     # Build orbital-metal mapping
-    metal_orbital_map = parse_orbital_metal_mapping(cas, cluster_info)
+    metal_orbital_map = _parse_orbital_metal_mapping(cas, cluster_info)
     _warn_if_spin_sites_unmapped(config, metal_orbital_map, cluster_info)
 
     # Step 1: High-spin UHF
@@ -332,8 +218,8 @@ def converge_reference_uhf(
             )
         return _callback
 
-    mol_hs = build_fake_mol(norb, nelec, ms2_highspin, ecore=fcidump_data.ecore)
-    mf_hs = build_reference_uhf_solver(fcidump_data, mol_hs, conv_tol, max_cycle)
+    mol_hs = _build_fake_mol(norb, nelec, ms2_highspin, ecore=fcidump_data.ecore)
+    mf_hs = _build_reference_uhf_solver(fcidump_data, mol_hs, conv_tol, max_cycle)
     mf_hs.callback = _collect_cycle(hs_history)
     mf_hs.kernel()
 
@@ -342,7 +228,7 @@ def converge_reference_uhf(
             "High-spin UHF did not converge for %s; falling back to occupation-based BS guess",
             config.label,
         )
-        dm_hs_a, dm_hs_b = build_bs_initial_guess_active_space(
+        dm_hs_a, dm_hs_b = _build_bs_initial_guess_active_space(
             cas, config, fcidump_data, metal_orbital_map
         )
     else:
@@ -369,8 +255,8 @@ def converge_reference_uhf(
     # Step 3: BS-UHF with stabilization
     ms2_target = int(2 * config.spin_isomer.Sz) if config.spin_isomer else 0
     ms2_target = _sanitize_ms2_for_nelec(nelec, ms2_target)
-    mol_bs = build_fake_mol(norb, nelec, ms2_target, ecore=fcidump_data.ecore)
-    mf_bs = build_reference_uhf_solver(fcidump_data, mol_bs, conv_tol, stabilize_cycles)
+    mol_bs = _build_fake_mol(norb, nelec, ms2_target, ecore=fcidump_data.ecore)
+    mf_bs = _build_reference_uhf_solver(fcidump_data, mol_bs, conv_tol, stabilize_cycles)
     bs_stabilize_history = []
     bs_tight_history = []
     mf_bs.callback = _collect_cycle(bs_stabilize_history)
@@ -418,7 +304,7 @@ def converge_reference_uhf(
         **final_summary,
     }
 
-    return ReferenceUHFResult(
+    return _ReferenceUHFResult(
         config=config,
         energy=mf_final.e_tot,
         converged=mf_final.converged,
@@ -429,131 +315,6 @@ def converge_reference_uhf(
         mo_occ=(mf_final.mo_occ[0], mf_final.mo_occ[1]),
         diagnostics=diagnostics,
     )
-
-
-def run_reference_uhf_batch(
-    cas: CAS,
-    configs: list,
-    fcidump_data,
-    cluster_info: ClusterInfo,
-    *,
-    conv_tol: float = 1e-8,
-    max_cycle: int = 2000,
-    stabilize_cycles: int = 20,
-    level_shift: float = 0.3,
-    damp: float = 0.2,
-    newton_refine: bool = False,
-    newton_max_cycle: int = 8,
-) -> list:
-    """Run active-space UHF for a batch of configurations.
-
-    Parameters
-    ----------
-    cas : CAS
-    configs : list[ElectronicConfig]
-    fcidump_data : FCIDUMPData
-    cluster_info : ClusterInfo
-    conv_tol : float
-    max_cycle : int
-    stabilize_cycles : int
-    level_shift : float
-    damp : float
-    newton_refine : bool
-    newton_max_cycle : int
-
-    Returns
-    -------
-    list[ActiveSpaceSCFResult]
-    """
-    results = []
-    for config in configs:
-        logger.info("Running active-space UHF for %s", config.label)
-        try:
-            result = converge_reference_uhf(
-                cas, config, fcidump_data, cluster_info,
-                conv_tol=conv_tol,
-                max_cycle=max_cycle,
-                stabilize_cycles=stabilize_cycles,
-                level_shift=level_shift,
-                damp=damp,
-                newton_refine=newton_refine,
-                newton_max_cycle=newton_max_cycle,
-            )
-        except Exception as e:
-            logger.warning("UHF failed for %s: %s", config.label, e)
-            result = ReferenceUHFResult(
-                config=config, energy=0.0, converged=False,
-                s_squared=0.0, mo_coeff=(None, None), mo_energy=(None, None),
-                dm=(None, None),
-                mo_occ=(None, None),
-            )
-        results.append(result)
-    return results
-
-
-# Backward-compatible aliases during the refactor.
-ActiveSpaceSCFResult = ReferenceUHFResult
-build_active_space_scf = build_reference_uhf_solver
-converge_active_space_uhf = converge_reference_uhf
-run_active_space_uhf_batch = run_reference_uhf_batch
-
-
-# ══════════════════════════════════════════════════════════════════
-# Internal Helpers
-# ══════════════════════════════════════════════════════════════════
-
-def _build_metal_label_map(cluster_info: ClusterInfo) -> dict[str, int]:
-    """Build exact metal-label aliases for robust orbital-to-site mapping."""
-    label_map = {}
-    element_counts = {}
-    for site_idx, metal in enumerate(cluster_info.metals):
-        if metal.label:
-            label_map[metal.label] = site_idx
-        element_counts[metal.element] = element_counts.get(metal.element, 0) + 1
-        label_map[f"{metal.element}{element_counts[metal.element]}"] = site_idx
-    return label_map
-
-
-def _parse_label_to_metal_site(label: str, metal_label_map: dict, metal_elements: dict) -> int | None:
-    """Parse an orbital label to determine which metal site it belongs to.
-
-    Examples:
-        "Fe1_3d_xy" -> site 0 (if Fe1 is the first Fe)
-        "Fe2_3d_z2" -> site 1
-        "S1_3p_x"   -> None (not a metal)
-        "LIG_1"     -> None
-    """
-    if not label:
-        return None
-
-    token = label.split("_", 1)[0].split(":", 1)[-1].strip()
-    if token in metal_label_map:
-        return metal_label_map[token]
-
-    # Fall back to the first element+number occurrence anywhere in the token.
-    match = re.search(r"([A-Z][a-z]?)(\d+)", token)
-    if not match:
-        return None
-
-    elem = match.group(1)
-    site_num = int(match.group(2)) - 1  # 0-indexed
-
-    if elem not in metal_elements:
-        return None
-
-    sites = metal_elements[elem]
-    if site_num < len(sites):
-        return sites[site_num]
-
-    return None
-
-
-def _is_spin_carrying_metal_orbital(label: str) -> bool:
-    """Return True for metal d-like labels used in BS spin assignment."""
-    if "_" not in label:
-        return False
-    orbital_part = label.split("_", 1)[1]
-    return re.search(r"\d+d", orbital_part) is not None
 
 
 def _swap_orbital_spin(dm_a, dm_b, orb_idx):
@@ -599,142 +360,31 @@ def _apply_d_orbital_encoding(dm_a, dm_b, site_idx, d_orb_idx, spin_dir,
     minority_dm[target_orb, target_orb] = total_occ
 
 
-def _summarize_final_state_from_dm(cas, config, cluster_info, dm):
-    """Summarize the converged/unconverged final state from the DM.
-
-    Returns user-facing descriptors for later ranking and analysis.
-    """
-    dm_a, dm_b = dm
-    metal_orbital_map = parse_orbital_metal_mapping(cas, cluster_info)
-    spin_diag = np.diag(dm_a - dm_b)
-
-    site_spin_proxy = {}
-    spin_tokens = []
-    for site_idx, metal in enumerate(cluster_info.metals):
-        orb_indices = [i for i, s in metal_orbital_map.items() if s == site_idx]
-        site_spin = float(sum(spin_diag[i] for i in orb_indices))
-        metal_label = resolve_metal_site_label(cluster_info, site_idx)
-        site_spin_proxy[metal_label] = site_spin
-        arrow = "↑" if site_spin >= 0 else "↓"
-        spin_tokens.append(f"{metal_label}{arrow}")
-
-    oxidation_tokens = []
-    if config.oxidation:
-        for site_idx, metal in enumerate(cluster_info.metals):
-            if site_idx in config.oxidation.assignments:
-                metal_label = resolve_metal_site_label(cluster_info, site_idx)
-                oxidation_tokens.append(
-                    f"{metal_label}({_to_roman(config.oxidation.assignments[site_idx])})"
-                )
-    oxidation_label = "+".join(oxidation_tokens) if oxidation_tokens else "ox:none"
-
-    final_d_basin = {}
-    d_tokens = []
-    if config.d_orbital_assignments:
-        for site_idx in sorted(config.d_orbital_assignments):
-            metal_label = resolve_metal_site_label(cluster_info, site_idx)
-            spin_dir = config.spin_assignment.get(site_idx, +1)
-            minority_dm = dm_b if spin_dir == +1 else dm_a
-            metal_orbs = [i for i, s in metal_orbital_map.items() if s == site_idx]
-            if not metal_orbs:
-                continue
-            diag = [float(minority_dm[i, i]) for i in metal_orbs]
-            target_orb = metal_orbs[int(np.argmax(diag))]
-            basin = _short_d_label(cas.orbital_labels[target_orb])
-            final_d_basin[metal_label] = basin
-            d_tokens.append(f"{metal_label}:{basin}")
-
-    return {
-        "final_site_spin_proxy": site_spin_proxy,
-        "final_d_basin": final_d_basin,
-        "final_state_signature": f"{''.join(spin_tokens)}|{oxidation_label}|{'+'.join(d_tokens) if d_tokens else 'd:none'}",
-    }
-
-
-def _short_d_label(label: str) -> str:
-    """Extract a compact user-facing d-orbital basin label from a CAS label."""
-    if "_" not in label:
-        return label
-    orbital_part = label.split("_", 1)[1]
-    m = re.search(r"\d+d(.+)$", orbital_part)
-    if m:
-        return f"d{m.group(1)}"
-    return orbital_part
-
-
-def _to_roman(n: int) -> str:
-    vals = [(10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")]
-    out = []
-    for v, sym in vals:
-        while n >= v:
-            out.append(sym)
-            n -= v
-    return "".join(out)
-
-
 def _compute_high_spin_ms2(cluster_info, config):
     """Compute maximum Ms for the high-spin reference state.
 
     All metal spins aligned in the same direction.
     Ms = sum of all local Si.
     """
-    from shared.chem_knowledge import get_local_spin
-
     total_ms = 0
     for i, metal in enumerate(cluster_info.metals):
         # Use oxidation state from config if available
         if config.oxidation and i in config.oxidation.assignments:
             ox = config.oxidation.assignments[i]
         else:
-            from .elec_spin_config_generator import get_common_oxidation_states
-            states = get_common_oxidation_states(metal.element)
+            states = _get_common_oxidation_states(metal.element)
             ox = states[0] if states else 2
-        S = get_local_spin(metal.element, ox)
+        S = _get_local_spin(metal.element, ox)
         total_ms += int(2 * S)  # 2*Ms = 2*S for fully aligned
 
     return total_ms
 
 
-def _build_default_init_guess(mol_fake, norb):
-    """Build a diagonal UHF initial guess in the FCIDUMP orbital basis."""
-    nelec = int(mol_fake.nelectron)
-    ms2 = int(mol_fake.spin)
-    nalpha = (nelec + ms2) // 2
-    nbeta = (nelec - ms2) // 2
-
-    dm_a = np.zeros((norb, norb))
-    dm_b = np.zeros((norb, norb))
-    dm_a[np.arange(min(nalpha, norb)), np.arange(min(nalpha, norb))] = 1.0
-    dm_b[np.arange(min(nbeta, norb)), np.arange(min(nbeta, norb))] = 1.0
-    return np.array((dm_a, dm_b))
-
-
-def _sanitize_ms2_for_nelec(nelec: int, ms2: int) -> int:
-    """Project an ms2 guess onto the nearest value compatible with nelec."""
-    target = int(round(ms2))
-    valid_ms2 = [m for m in range(-nelec, nelec + 1) if (nelec - m) % 2 == 0]
-    if target in valid_ms2:
-        return target
-
-    sanitized = min(
-        valid_ms2,
-        key=lambda candidate: (
-            abs(candidate - target),
-            0 if (target == 0 or np.sign(candidate) == np.sign(target)) else 1,
-            abs(candidate),
-            0 if (target >= 0 and candidate >= 0) or (target < 0 and candidate <= 0) else 1,
-        ),
-    )
-    logger.warning(
-        "Adjusted incompatible ms2=%s to ms2=%s for nelec=%s",
-        target,
-        sanitized,
-        nelec,
-    )
-    return sanitized
-
-
-def _warn_if_spin_sites_unmapped(config: ElectronicConfig, metal_orbital_map: dict, cluster_info: ClusterInfo):
+def _warn_if_spin_sites_unmapped(
+    config: _ElectronicConfig,
+    metal_orbital_map: dict,
+    cluster_info: _ClusterInfo,
+):
     """Warn when the BS pattern names metal sites absent from the active-space labels."""
     covered_sites = {site_idx for site_idx in metal_orbital_map.values() if site_idx is not None}
     missing_sites = sorted(
@@ -745,7 +395,7 @@ def _warn_if_spin_sites_unmapped(config: ElectronicConfig, metal_orbital_map: di
         return
 
     missing_labels = [
-        resolve_metal_site_label(cluster_info, site_idx)
+        _resolve_metal_site_label(cluster_info, site_idx)
         for site_idx in missing_sites
     ]
     logger.warning(

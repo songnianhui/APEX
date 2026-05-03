@@ -1,13 +1,31 @@
 """Settings utilities shared across APEX packages."""
 
 import re
-from dataclasses import replace
+from dataclasses import replace as _replace
 
 import yaml
 
-from .models import ComputationSettings
+from .models import ComputationSettings as _ComputationSettings
 
 _ELEMENT_SYMBOL_RE = re.compile(r"^[A-Z][a-z]?$")
+
+
+DEFAULT_PRESET = _replace(_ComputationSettings(), max_cycle=200)
+
+FAST_PRESET = _replace(
+    DEFAULT_PRESET,
+    basis_set_default="def2-SVP",
+    basis_set_per_element={},
+    relativistic="none",
+    solvation_model="none",
+    conv_tol=1e-6,
+    max_cycle=100,
+)
+
+PRESETS = {
+    "default": DEFAULT_PRESET,
+    "fast": FAST_PRESET,
+}
 
 
 def load_basis_file(filepath: str) -> dict:
@@ -42,15 +60,22 @@ def load_basis_file(filepath: str) -> dict:
     return result
 
 
-def apply_overrides(settings: ComputationSettings, **overrides) -> ComputationSettings:
+def apply_overrides(settings: _ComputationSettings, **overrides) -> _ComputationSettings:
     """Apply keyword overrides to a ComputationSettings instance."""
     basis_per_element_override = overrides.pop("basis_set_per_element", None)
+    basis_file = overrides.pop("basis_set_file", None)
     merged_basis = dict(settings.basis_set_per_element)
 
     if basis_per_element_override is not None:
-        merged_basis.update(basis_per_element_override)
+        if len(basis_per_element_override) == 0:
+            merged_basis = {}
+        else:
+            merged_basis.update(basis_per_element_override)
 
-    return replace(settings, basis_set_per_element=merged_basis, **overrides)
+    if basis_file is not None:
+        merged_basis.update(load_basis_file(basis_file))
+
+    return _replace(settings, basis_set_per_element=merged_basis, **overrides)
 
 
 def load_cas_settings_file(filepath: str) -> dict:
@@ -73,14 +98,18 @@ def load_cas_settings_file(filepath: str) -> dict:
     return data
 
 
-load_scf_settings_file = load_cas_settings_file
+def settings_from_preset(preset_name: str, **overrides) -> _ComputationSettings:
+    """Get a preset configuration and apply overrides in one call."""
+    if preset_name not in PRESETS:
+        raise KeyError(
+            f"Unknown preset {preset_name!r}. "
+            f"Available presets: {sorted(PRESETS)}"
+        )
+    return apply_overrides(PRESETS[preset_name], **overrides)
 
 
-def build_basis_dict(cluster_info, settings: ComputationSettings):
+def build_basis_dict(cluster_info, settings: _ComputationSettings):
     """Build a PySCF basis specification from cluster info and settings."""
-    if settings.basis_set_file:
-        return settings.basis_set_file
-
     elements = set()
 
     for metal in cluster_info.metals:

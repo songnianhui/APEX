@@ -2,22 +2,22 @@
 
 import os
 import re
-from collections import Counter
-from itertools import combinations
+from collections import Counter as _Counter
+from itertools import combinations as _combinations
 import json
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
+from scipy.optimize import linear_sum_assignment as _linear_sum_assignment
 
 from .models import (
-    BridgingAtom,
-    ClusterInfo,
-    MetalCenter,
-    TerminalLigand,
+    BridgingAtom as _BridgingAtom,
+    ClusterInfo as _ClusterInfo,
+    MetalCenter as _MetalCenter,
+    TerminalLigand as _TerminalLigand,
 )
 from .cluster_info_io import (
-    load_cluster_info_yaml,
-    resolve_cluster_metadata,
+    load_cluster_info_yaml as _load_cluster_info_yaml,
+    resolve_cluster_metadata as _resolve_cluster_metadata,
 )
 from .element_data import (
     BRIDGING_ELEMENTS as DEFAULT_BRIDGING_ELEMENTS,
@@ -45,6 +45,7 @@ MAX_METAL_METAL_DIST = 3.5
 
 def parse_structure(filepath: str, charge: int = 0, target_spin: float = 0.0,
                     cluster_info_path: str = None,
+                    custom_metals: list | None = None,
                     symmetry_group_override: str = None,
                     reduction_symmetry_override: str = None,
                     symmetry_detection_mode: str = "auto",
@@ -53,7 +54,7 @@ def parse_structure(filepath: str, charge: int = 0, target_spin: float = 0.0,
                     config_reduction_mode: str = "none",
                     bond_tolerance: float = BOND_TOLERANCE,
                     max_metal_metal_dist: float = MAX_METAL_METAL_DIST,
-                    max_metal_ligand_dist: float = MAX_METAL_LIGAND_DIST) -> ClusterInfo:
+                    max_metal_ligand_dist: float = MAX_METAL_LIGAND_DIST) -> _ClusterInfo:
     """Parse a structure file and return a ClusterInfo object.
 
     Args:
@@ -62,6 +63,8 @@ def parse_structure(filepath: str, charge: int = 0, target_spin: float = 0.0,
         target_spin: Target total spin S quantum number.
         cluster_info_path: Optional annotation file path. When provided,
             explicit atom roles/charges/labels override automatic parsing.
+        custom_metals: Optional extra element symbols to treat as metals in
+            auto-detection mode for unusual benchmark or setup cases.
         symmetry_group_override: Optional user-specified symmetry label
             (e.g. "Td", "C3"). Consumed according to symmetry_detection_mode.
         reduction_symmetry_override: Optional user-specified downstream
@@ -93,12 +96,12 @@ def parse_structure(filepath: str, charge: int = 0, target_spin: float = 0.0,
     atom_annotations = {}
     strict_authority = False
     if cluster_info_path:
-        cluster_payload = load_cluster_info_yaml(
+        cluster_payload = _load_cluster_info_yaml(
             cluster_info_path,
             elements=elements,
         )
         cluster_meta = cluster_payload.get("cluster") or {}
-        merged_meta = resolve_cluster_metadata(
+        merged_meta = _resolve_cluster_metadata(
             cluster_meta,
             total_charge=charge,
             target_spin=target_spin,
@@ -145,6 +148,7 @@ def parse_structure(filepath: str, charge: int = 0, target_spin: float = 0.0,
             elements,
             positions,
             annotations=atom_annotations,
+            custom_metals=custom_metals,
         )
 
         # Set metal neighbors from connectivity
@@ -206,7 +210,7 @@ def parse_structure(filepath: str, charge: int = 0, target_spin: float = 0.0,
     )
     resolved_family_scheme = family_scheme or _default_family_scheme(benchmark_profile)
 
-    return ClusterInfo(
+    return _ClusterInfo(
         metals=metals,
         bridging_atoms=bridging_atoms,
         terminal_ligands=terminal_ligands,
@@ -230,7 +234,7 @@ def parse_structure(filepath: str, charge: int = 0, target_spin: float = 0.0,
     )
 
 
-def analyze_symmetry_report(cluster_info: ClusterInfo) -> dict:
+def analyze_symmetry_report(cluster_info: _ClusterInfo) -> dict:
     """Build a geometry-focused symmetry report for a parsed cluster.
 
     The report is intentionally descriptive rather than authoritative:
@@ -260,7 +264,7 @@ def analyze_symmetry_report(cluster_info: ClusterInfo) -> dict:
     metal_center = metal_positions.mean(axis=0)
     pair_distances = [
         float(np.linalg.norm(metal_positions[i] - metal_positions[j]))
-        for i, j in combinations(range(len(metal_positions)), 2)
+        for i, j in _combinations(range(len(metal_positions)), 2)
     ]
     pair_mean = float(np.mean(pair_distances)) if pair_distances else 0.0
     pair_std = float(np.std(pair_distances)) if pair_distances else 0.0
@@ -386,7 +390,7 @@ def symmetry_report_json(report: dict) -> str:
     return json.dumps(report, indent=2, sort_keys=True)
 
 
-def _identify_metal_centers(elements, positions, annotations=None):
+def _identify_metal_centers(elements, positions, annotations=None, custom_metals=None):
     """Identify all transition metal centers in the structure.
 
     Args:
@@ -396,6 +400,8 @@ def _identify_metal_centers(elements, positions, annotations=None):
     """
     annotations = annotations or {}
     metal_set = set(TRANSITION_METALS)
+    if custom_metals:
+        metal_set.update(custom_metals)
 
     metals = []
     metal_count = {}  # track count per element for labeling
@@ -408,7 +414,7 @@ def _identify_metal_centers(elements, positions, annotations=None):
         if is_metal:
             metal_count[elem] = metal_count.get(elem, 0) + 1
             label = annotation.get("label") or f"{elem}{metal_count[elem]}"
-            metals.append(MetalCenter(
+            metals.append(_MetalCenter(
                 element=elem,
                 index=i,
                 position=np.array(positions[i]),
@@ -466,7 +472,7 @@ def _build_metal_centers_from_authority(elements, positions, connectivity, annot
         annotation = annotations.get(i, {})
         if annotation.get("role") != "metal":
             continue
-        metal = MetalCenter(
+        metal = _MetalCenter(
             element=elem,
             index=i,
             position=np.array(positions[i]),
@@ -498,7 +504,7 @@ def _build_bridging_atoms_from_authority(elements, positions, metals, annotation
             )
         metal_idx_to_metal_pos = {m.index: k for k, m in enumerate(metals)}
         bridging_atoms.append(
-            BridgingAtom(
+            _BridgingAtom(
                 element=elem,
                 index=i,
                 position=np.array(positions[i]),
@@ -528,7 +534,7 @@ def _build_terminal_ligands_from_authority(elements, metals, annotations):
             )
         metal_idx = bound_to[0]
         terminal_ligands.append(
-            TerminalLigand(
+            _TerminalLigand(
                 name=annotation.get("ligand_type", elem),
                 atom_indices=[i],
                 donor_atom_index=i,
@@ -612,7 +618,7 @@ def _identify_bridging_atoms(elements, positions, metals, connectivity,
             if role == "bridging" and elem == "C" and len(bonded_metals) >= 4:
                 role = "interstitial"
 
-            bridging_atoms.append(BridgingAtom(
+            bridging_atoms.append(_BridgingAtom(
                 element=elem,
                 index=i,
                 position=np.array(positions[i]),
@@ -676,7 +682,7 @@ def _identify_terminal_ligands(elements, positions, metals, connectivity, annota
 
             lig_charge = int(annotation.get("charge", LIGAND_ATOM_CHARGES.get(elem, 0)))
 
-            terminal_ligands.append(TerminalLigand(
+            terminal_ligands.append(_TerminalLigand(
                 name=annotation.get("ligand_type", elem),
                 atom_indices=[neighbor_idx],
                 donor_atom_index=neighbor_idx,
@@ -721,7 +727,7 @@ def _resolve_metal_refs(refs, metals):
 
 def _generate_formula(elements):
     """Generate a Hill-order chemical formula."""
-    counts = Counter(elements)
+    counts = _Counter(elements)
     # Put C first, then H, then alphabetical
     parts = []
     if "C" in counts:
@@ -736,13 +742,6 @@ def _generate_formula(elements):
         parts.append(f"{elem}{c}" if c > 1 else elem)
 
     return "".join(parts)
-
-
-def _detect_symmetry(metals, positions):
-    """Backward-compatible wrapper for approximate symmetry detection."""
-    details = _detect_symmetry_details(metals, positions)
-    return details["symmetry_group"], details["symmetry_axis_atoms"]
-
 
 def _detect_molecular_point_group(elements, positions) -> str:
     """Detect the full-cluster point group using PySCF's symmetry analyzer.
@@ -960,7 +959,7 @@ def _tetrahedral_score(positions: np.ndarray) -> float:
         return 0.0
 
     dists = []
-    for i, j in combinations(range(4), 2):
+    for i, j in _combinations(range(4), 2):
         dists.append(float(np.linalg.norm(positions[i] - positions[j])))
     dists = np.array(dists)
     mean = float(np.mean(dists))
@@ -990,7 +989,7 @@ def _generate_candidate_axes(centered: np.ndarray) -> list[np.ndarray]:
         if np.linalg.norm(vec) > 1e-8:
             axes.append(vec)
 
-    for i, j in combinations(range(n), 2):
+    for i, j in _combinations(range(n), 2):
         diff = centered[j] - centered[i]
         if np.linalg.norm(diff) > 1e-8:
             axes.append(diff)
@@ -1024,7 +1023,7 @@ def _rotation_match_rmsd(centered: np.ndarray, axis: np.ndarray, fold: int) -> f
     rotated = (rot @ centered.T).T
     diff = rotated[:, None, :] - centered[None, :, :]
     cost = np.linalg.norm(diff, axis=2)
-    row_ind, col_ind = linear_sum_assignment(cost)
+    row_ind, col_ind = _linear_sum_assignment(cost)
     matched = cost[row_ind, col_ind]
     return float(np.sqrt(np.mean(matched ** 2)))
 

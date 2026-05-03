@@ -1,10 +1,17 @@
-"""Enumeration steps for the interactive APEX_Filter pipeline."""
+"""Step 2 enumeration entrypoints for the staged APEX_Filter workflow."""
 
 import copy
+import json
 import os
 
-from .session import SessionManager
-from .selection_guidance import write_selection_artifacts
+from .elec_spin_config_generator import (
+    canonicalize_config_spin_labels as _canonicalize_config_spin_labels,
+    generate_all_configs as _generate_all_configs,
+    _reduce_configs_by_symmetry,
+    _summarize_enumeration_layers,
+)
+from .session import SessionManager as _SessionManager
+from .selection_guidance import _write_selection_artifacts
 
 
 _ENUMERATE_DEFAULTS = {
@@ -16,7 +23,7 @@ _ENUMERATE_DEFAULTS = {
 
 def step_enumerate(session_dir: str, *, target_Sz=None, forced_oxidation=None, max_configs=None):
     """Enumerate spin isomers and electronic configurations."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step2_enumerate", "step1_load")
     controls = sm.resolve_method_controls(
         "enumerate",
@@ -40,24 +47,18 @@ def step_enumerate(session_dir: str, *, target_Sz=None, forced_oxidation=None, m
 
     if target_Sz is None:
         target_Sz = ci.target_spin
-    from .elec_spin_config_generator import (
-        canonicalize_config_spin_labels,
-        generate_all_configs,
-        reduce_configs_by_symmetry,
-        summarize_enumeration_layers,
-    )
 
-    raw_configs = generate_all_configs(
+    raw_configs = _generate_all_configs(
         ci,
         target_Sz=target_Sz,
         max_configs=max_configs,
         forced_oxidation=forced_oxidation,
     )
     raw_configs_for_stats = copy.deepcopy(raw_configs)
-    raw_configs, spin_isomers, families = canonicalize_config_spin_labels(raw_configs, ci)
-    configs = reduce_configs_by_symmetry(raw_configs, ci)
+    raw_configs, spin_isomers, families = _canonicalize_config_spin_labels(raw_configs, ci)
+    configs = _reduce_configs_by_symmetry(raw_configs, ci)
     n_total = len(configs)
-    enum_stats = summarize_enumeration_layers(raw_configs_for_stats, configs, spin_isomers, families)
+    enum_stats = _summarize_enumeration_layers(raw_configs_for_stats, configs, spin_isomers, families)
     enum_stats["family_scheme"] = getattr(ci, "family_scheme", "") or ""
     enum_stats["benchmark_profile"] = getattr(ci, "benchmark_profile", "") or ""
     enum_stats["config_reduction_mode"] = getattr(ci, "config_reduction_mode", "none") or "none"
@@ -108,7 +109,7 @@ def step_enumerate(session_dir: str, *, target_Sz=None, forced_oxidation=None, m
         }
         for cfg in configs
     ]
-    write_selection_artifacts(
+    _write_selection_artifacts(
         os.path.join(sm.session_dir, "step2_enumerate"),
         step_name="Step 2 enumerate",
         next_step_name="uhf",
@@ -117,7 +118,5 @@ def step_enumerate(session_dir: str, *, target_Sz=None, forced_oxidation=None, m
         keep_default="1",
     )
     with open(os.path.join(sm.session_dir, "step2_enumerate", "enumeration_layers.json"), "w", encoding="utf-8") as fh:
-        import json
-
         json.dump(enum_stats, fh, indent=2, ensure_ascii=False)
     print(f"\nStep 2 complete. {n_total} configurations saved to session.")

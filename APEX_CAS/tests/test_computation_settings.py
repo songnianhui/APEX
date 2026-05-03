@@ -1,7 +1,7 @@
-"""Tests for computation_defaults module.
+"""Regression tests for shared settings and preset utilities.
 
-Comprehensive tests for presets, basis file loading, overrides,
-and basis dict construction.
+Comprehensive coverage for presets, basis file loading, overrides,
+and basis-dict construction.
 """
 
 import os
@@ -11,8 +11,8 @@ import unittest
 import yaml
 
 from apex_cas import ComputationSettings
-from apex_cas.computation_defaults import (
-    CHAN_2019_PRESET,
+from shared.setting_utils import (
+    DEFAULT_PRESET,
     FAST_PRESET,
     PRESETS,
     apply_overrides,
@@ -24,7 +24,7 @@ from apex_cas import ClusterInfo, MetalCenter, BridgingAtom
 
 
 class TestPresets(unittest.TestCase):
-    def test_default_preset_is_chan2019(self):
+    def test_default_preset_baseline(self):
         s = PRESETS["default"]
         self.assertEqual(s.scf_method, "uks")
         self.assertEqual(s.xc_functional, "B3LYP")
@@ -43,8 +43,8 @@ class TestPresets(unittest.TestCase):
         self.assertEqual(s.conv_tol, 1e-6)
         self.assertEqual(s.max_cycle, 100)
 
-    def test_chan2019_mixed_basis(self):
-        s = CHAN_2019_PRESET
+    def test_default_preset_mixed_basis(self):
+        s = DEFAULT_PRESET
         self.assertEqual(s.get_basis("Fe"), "def2-TZVP")
         self.assertEqual(s.get_basis("Mo"), "def2-TZVP")
         self.assertEqual(s.get_basis("S"), "def2-TZVP")
@@ -54,7 +54,7 @@ class TestPresets(unittest.TestCase):
         self.assertEqual(s.get_basis("N"), "def2-SVP")
 
     def test_unknown_element_uses_default(self):
-        s = CHAN_2019_PRESET
+        s = DEFAULT_PRESET
         self.assertEqual(s.get_basis("Xe"), "def2-TZVP")  # falls back to default
 
     def test_two_presets_available(self):
@@ -120,13 +120,13 @@ class TestLoadBasisFile(unittest.TestCase):
 
 class TestApplyOverrides(unittest.TestCase):
     def test_simple_override(self):
-        s = apply_overrides(CHAN_2019_PRESET, scf_method="uhf")
+        s = apply_overrides(DEFAULT_PRESET, scf_method="uhf")
         self.assertEqual(s.scf_method, "uhf")
         # Original should be unchanged
-        self.assertEqual(CHAN_2019_PRESET.scf_method, "uks")
+        self.assertEqual(DEFAULT_PRESET.scf_method, "uks")
 
     def test_basis_merge(self):
-        s = apply_overrides(CHAN_2019_PRESET,
+        s = apply_overrides(DEFAULT_PRESET,
                             basis_set_per_element={"Fe": "def2-QZVP"})
         self.assertEqual(s.get_basis("Fe"), "def2-QZVP")
         # Other elements should still have Chan 2019 values
@@ -138,14 +138,14 @@ class TestApplyOverrides(unittest.TestCase):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
             yaml.dump(data, f)
             f.flush()
-            s = apply_overrides(CHAN_2019_PRESET, basis_set_file=f.name)
+            s = apply_overrides(DEFAULT_PRESET, basis_set_file=f.name)
         os.unlink(f.name)
         self.assertEqual(s.get_basis("Fe"), "def2-QZVP")
         self.assertEqual(s.get_basis("Mo"), "def2-QZVP")
         self.assertEqual(s.get_basis("S"), "def2-TZVP")
 
     def test_multiple_overrides(self):
-        s = apply_overrides(CHAN_2019_PRESET,
+        s = apply_overrides(DEFAULT_PRESET,
                             scf_method="uhf",
                             conv_tol=1e-6,
                             max_cycle=50)
@@ -155,9 +155,10 @@ class TestApplyOverrides(unittest.TestCase):
         self.assertEqual(s.xc_functional, "B3LYP")  # unchanged
 
     def test_override_does_not_mutate_original(self):
-        original_tol = CHAN_2019_PRESET.conv_tol
-        s = apply_overrides(CHAN_2019_PRESET, conv_tol=1e-4)
-        self.assertEqual(CHAN_2019_PRESET.conv_tol, original_tol)
+        original_tol = DEFAULT_PRESET.conv_tol
+        updated = apply_overrides(DEFAULT_PRESET, conv_tol=1e-4)
+        self.assertEqual(updated.conv_tol, 1e-4)
+        self.assertEqual(DEFAULT_PRESET.conv_tol, original_tol)
 
 
 class TestSettingsFromPreset(unittest.TestCase):
@@ -197,7 +198,7 @@ class TestBuildBasisDict(unittest.TestCase):
 
     def test_build_basis_dict(self):
         ci = self._make_cluster()
-        result = build_basis_dict(ci, CHAN_2019_PRESET)
+        result = build_basis_dict(ci, DEFAULT_PRESET)
         self.assertEqual(result["Fe"], "def2-TZVP")
         self.assertEqual(result["S"], "def2-TZVP")
 
@@ -218,13 +219,13 @@ class TestBuildBasisDict(unittest.TestCase):
             terminal_ligands=ligands,
             all_elements=["Fe", "S", "C", "H"],
         )
-        result = build_basis_dict(ci, CHAN_2019_PRESET)
+        result = build_basis_dict(ci, DEFAULT_PRESET)
         self.assertIn("Fe", result)
         self.assertIn("S", result)
 
     def test_build_basis_dict_sorted_keys(self):
         ci = self._make_cluster()
-        result = build_basis_dict(ci, CHAN_2019_PRESET)
+        result = build_basis_dict(ci, DEFAULT_PRESET)
         self.assertEqual(list(result.keys()), sorted(result.keys()))
 
     def test_build_basis_dict_fast_preset(self):
@@ -235,7 +236,7 @@ class TestBuildBasisDict(unittest.TestCase):
 
 
 class TestGetBasisMethod(unittest.TestCase):
-    """Tests for the ComputationSettings.get_basis method."""
+    """Regression coverage for `ComputationSettings.get_basis(...)`."""
 
     def test_per_element_takes_priority(self):
         s = ComputationSettings(
@@ -252,6 +253,3 @@ class TestGetBasisMethod(unittest.TestCase):
         )
         self.assertEqual(s.get_basis("Fe"), "def2-SVP")
 
-
-if __name__ == "__main__":
-    unittest.main()

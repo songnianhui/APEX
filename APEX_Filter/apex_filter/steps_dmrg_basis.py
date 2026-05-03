@@ -1,14 +1,15 @@
 """DMRG orbital-basis preparation step."""
 
 import csv
+import json
 import os
 from shared.orbital_methods.metadata import DMRG_BASIS_SOURCE_METHOD
 
-from .CAS_loader import load_filter_inputs
-from .dmrg_orbital_basis import build_dmrg_orbital_basis, save_dmrg_orbital_basis
-from .pick import apply_pick, parse_pick_arg
-from .selection_guidance import attach_display_labels, build_display_label_map, write_selection_artifacts
-from .session import SessionManager
+from .CAS_loader import _load_filter_inputs
+from .dmrg_orbital_basis import _build_dmrg_orbital_basis, _save_dmrg_orbital_basis
+from .pick import _apply_pick, _parse_pick_arg
+from .selection_guidance import _attach_display_labels, _build_display_label_map, _write_selection_artifacts
+from .session import SessionManager as _SessionManager
 
 _DMRG_BASIS_DEFAULTS = {
     "localization_method": "pm",
@@ -20,6 +21,8 @@ _DMRG_BASIS_DEFAULTS = {
     "pm_conv_tol": 1e-6,
     "pm_conv_tol_grad": None,
     "pm_max_cycle": 100,
+    "pm_exponent": 2,
+    "pm_init_guess": "atomic",
     "boys_conv_tol": 1e-6,
     "boys_conv_tol_grad": None,
     "boys_max_cycle": 100,
@@ -45,6 +48,8 @@ def step_dmrg_basis(
     pm_conv_tol: float = 1e-6,
     pm_conv_tol_grad: float | None = None,
     pm_max_cycle: int = 100,
+    pm_exponent: int = 2,
+    pm_init_guess: str = "atomic",
     boys_conv_tol: float = 1e-6,
     boys_conv_tol_grad: float | None = None,
     boys_max_cycle: int = 100,
@@ -56,7 +61,7 @@ def step_dmrg_basis(
     ga_seed: int = 17,
 ):
     """Prepare unrestricted orbital bases for later UDMRG calculations."""
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.require_previous("step7_dmrg_basis", "step6_ccsdt")
     controls = sm.resolve_method_controls(
         "dmrg_basis",
@@ -71,6 +76,8 @@ def step_dmrg_basis(
             "pm_conv_tol": pm_conv_tol,
             "pm_conv_tol_grad": pm_conv_tol_grad,
             "pm_max_cycle": pm_max_cycle,
+            "pm_exponent": pm_exponent,
+            "pm_init_guess": pm_init_guess,
             "boys_conv_tol": boys_conv_tol,
             "boys_conv_tol_grad": boys_conv_tol_grad,
             "boys_max_cycle": boys_max_cycle,
@@ -91,6 +98,8 @@ def step_dmrg_basis(
     pm_conv_tol = controls["pm_conv_tol"]
     pm_conv_tol_grad = controls.get("pm_conv_tol_grad")
     pm_max_cycle = controls["pm_max_cycle"]
+    pm_exponent = controls["pm_exponent"]
+    pm_init_guess = controls["pm_init_guess"]
     boys_conv_tol = controls["boys_conv_tol"]
     boys_conv_tol_grad = controls.get("boys_conv_tol_grad")
     boys_max_cycle = controls["boys_max_cycle"]
@@ -108,18 +117,18 @@ def step_dmrg_basis(
 
     state = sm.load_load_state()
     enum_data = sm.load_enumeration()
-    ccsdt_summary = sm.load_ccsdt_summary()
+    ccsdt_summary = sm.load_step_summary("step6_ccsdt", "ccsdt_summary.json")
     ccsdt_by_label = {row.get("label"): row for row in ccsdt_summary if row.get("label")}
-    display_label_map = build_display_label_map(ccsdt_summary)
-    inputs = load_filter_inputs(config_path)
+    display_label_map = _build_display_label_map(ccsdt_summary)
+    inputs = _load_filter_inputs(config_path)
 
     cas = state["cas"]
     fcid = state["fcidump_data"]
     mol = inputs.mol
     configs = enum_data["configs"]
 
-    pick_spec = parse_pick_arg(pick)
-    selected_labels = apply_pick(pick_spec, ccsdt_summary)
+    pick_spec = _parse_pick_arg(pick)
+    selected_labels = _apply_pick(pick_spec, ccsdt_summary)
     config_map = {cfg.label: cfg for cfg in configs}
     selected_configs = [config_map[label] for label in selected_labels if label in config_map]
 
@@ -130,13 +139,38 @@ def step_dmrg_basis(
     print(f"  Localization: {localization_method}")
     print("  Route: UCCSD NO -> split localization -> alpha/beta pairing -> GA ordering")
 
-    sm.save_dmrg_basis_picked(selected_labels)
+    sm.save_step_picked("step7_dmrg_basis", selected_labels)
     if not selected_configs:
         print("  No configs selected. Aborting.")
-        sm.save_dmrg_basis_summary([])
+        sm.save_step_summary("step7_dmrg_basis", "dmrg_basis_summary.json", [])
         return
 
-    results_dir = sm.dmrg_basis_results_dir
+    dmrg_basis_settings_payload = sm._build_step_settings_payload(
+        state.get("settings"),
+        theory="DMRG basis",
+        localization_method=localization_method,
+        cc_conv_tol=cc_conv_tol,
+        cc_max_cycle=cc_max_cycle,
+        cc_diis_space=cc_diis_space,
+        cc_direct=cc_direct,
+        pm_pop_method=pm_pop_method,
+        pm_conv_tol=pm_conv_tol,
+        pm_conv_tol_grad=pm_conv_tol_grad,
+        pm_max_cycle=pm_max_cycle,
+        pm_exponent=pm_exponent,
+        pm_init_guess=pm_init_guess,
+        boys_conv_tol=boys_conv_tol,
+        boys_conv_tol_grad=boys_conv_tol_grad,
+        boys_max_cycle=boys_max_cycle,
+        ordering_matrix_mode=ordering_matrix_mode,
+        exchange_proxy_max_orbitals=exchange_proxy_max_orbitals,
+        ga_generations=ga_generations,
+        ga_population=ga_population,
+        ga_mutation_rate=ga_mutation_rate,
+        ga_seed=ga_seed,
+    )
+
+    results_dir = sm.step_artifact_dir("step7_dmrg_basis", "results")
     uhf_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
     os.makedirs(results_dir, exist_ok=True)
 
@@ -144,11 +178,12 @@ def step_dmrg_basis(
     for idx, cfg in enumerate(selected_configs, 1):
         label = cfg.label.replace("|", "_").replace(" ", "_")
         uhf_npz = os.path.join(uhf_dir, f"{label}_uhf.npz")
+        uhf_h5 = os.path.join(uhf_dir, f"{label}_uhf.h5")
         out_npz = os.path.join(results_dir, f"{label}_dmrg_basis.npz")
 
         print(f"  [{idx}/{len(selected_configs)}] {cfg.label} ... ", end="", flush=True)
         try:
-            basis = build_dmrg_orbital_basis(
+            basis = _build_dmrg_orbital_basis(
                 mol,
                 cas,
                 fcid,
@@ -162,6 +197,8 @@ def step_dmrg_basis(
                 pm_conv_tol=pm_conv_tol,
                 pm_conv_tol_grad=pm_conv_tol_grad,
                 pm_max_cycle=pm_max_cycle,
+                pm_exponent=pm_exponent,
+                pm_init_guess=pm_init_guess,
                 boys_conv_tol=boys_conv_tol,
                 boys_conv_tol_grad=boys_conv_tol_grad,
                 boys_max_cycle=boys_max_cycle,
@@ -172,7 +209,20 @@ def step_dmrg_basis(
                 ga_mutation_rate=ga_mutation_rate,
                 ga_seed=ga_seed,
             )
-            save_dmrg_orbital_basis(basis, out_npz)
+            _save_dmrg_orbital_basis(
+                basis,
+                out_npz,
+                label=cfg.label,
+                family=cfg.spin_isomer.family if cfg.spin_isomer else "",
+                energy=ccsdt_by_label.get(cfg.label, {}).get("energy"),
+                reference_state_path=uhf_h5 if os.path.isfile(uhf_h5) else None,
+                fcidump_path=state.get("fcidump_path"),
+                settings=state.get("settings"),
+                settings_payload=dmrg_basis_settings_payload,
+                cluster_info=state.get("cluster_info"),
+                fcidump_data=fcid,
+                cas=cas,
+            )
             print("OK")
             upstream = ccsdt_by_label.get(cfg.label, {})
             summary.append(
@@ -211,10 +261,10 @@ def step_dmrg_basis(
                 }
             )
 
-    attach_display_labels(summary, ccsdt_summary)
-    sm.save_dmrg_basis_summary(summary)
+    _attach_display_labels(summary, ccsdt_summary)
+    sm.save_step_summary("step7_dmrg_basis", "dmrg_basis_summary.json", summary)
     _write_dmrg_basis_qc_artifacts(os.path.join(sm.session_dir, "step7_dmrg_basis"), summary)
-    write_selection_artifacts(
+    _write_selection_artifacts(
         os.path.join(sm.session_dir, "step7_dmrg_basis"),
         step_name="Step 7 DMRG orbital basis",
         next_step_name="dmrg",
@@ -247,8 +297,6 @@ def _write_dmrg_basis_qc_artifacts(step_dir: str, summary: list[dict]):
         return
 
     with open(os.path.join(step_dir, "dmrg_basis_qc.json"), "w", encoding="utf-8") as f:
-        import json
-
         json.dump(rows, f, indent=2, ensure_ascii=False)
 
     fieldnames = list(rows[0].keys())

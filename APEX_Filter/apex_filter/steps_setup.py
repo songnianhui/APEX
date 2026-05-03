@@ -1,8 +1,9 @@
-"""Session setup steps for the interactive APEX_Filter pipeline."""
+"""Step 1 session-setup entrypoints for the staged APEX_Filter workflow."""
 
 import os
 
-from .session import SessionManager
+from .CAS_loader import _load_filter_inputs
+from .session import SessionManager as _SessionManager
 
 
 def _validate_active_space_inputs(cas, fcid):
@@ -21,13 +22,11 @@ def _validate_active_space_inputs(cas, fcid):
 
 def step_load(config_path: str, session_dir: str):
     """Load CAS + FCIDUMP + ClusterInfo from a YAML config file."""
-    from .CAS_loader import load_filter_inputs
-
     print("=" * 60)
     print("Step 1: Loading CAS + FCIDUMP from config")
     print("=" * 60)
 
-    inputs = load_filter_inputs(config_path)
+    inputs = _load_filter_inputs(config_path)
     cas = inputs.cas
     fcid = inputs.fcidump_data
     ci = inputs.cluster_info
@@ -42,7 +41,7 @@ def step_load(config_path: str, session_dir: str):
     print(f"  Metals   : {', '.join(m.element for m in ci.metals)}")
     print(f"  Charge={ci.total_charge}, Target S={ci.target_spin}")
 
-    sm = SessionManager(session_dir)
+    sm = _SessionManager(session_dir)
     sm.create()
     sm.save_load_state(
         ci,

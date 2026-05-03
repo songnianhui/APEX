@@ -12,7 +12,7 @@ layers are:
 from __future__ import annotations
 
 import os
-from copy import deepcopy
+from copy import deepcopy as _deepcopy
 
 import yaml
 
@@ -96,7 +96,7 @@ def _apply_group_rules(annotations: dict[int, dict], groups: list[dict], *, n_at
 
         for atom_idx, annotation in annotations.items():
             if _matches_selector(annotation, selector, n_atoms=n_atoms):
-                annotation.update(deepcopy(assign))
+                annotation.update(_deepcopy(assign))
 
 
 def _apply_atom_overrides(annotations: dict[int, dict], atoms: list[dict], *, n_atoms: int | None):
@@ -112,7 +112,7 @@ def _apply_atom_overrides(annotations: dict[int, dict], atoms: list[dict], *, n_
             )
         if idx not in annotations:
             annotations[idx] = {"atom_index": idx}
-        annotations[idx].update(deepcopy(atom))
+        annotations[idx].update(_deepcopy(atom))
 
 
 def _apply_role_defaults(annotations: dict[int, dict], defaults: dict):

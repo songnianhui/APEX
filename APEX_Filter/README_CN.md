@@ -6,7 +6,7 @@
 
 `load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt -> dmrg-basis -> dmrg -> extrapolate -> report`
 
-当前实现还包含一个高阶分支：
+仓库中仍然保留一个高阶分支：
 
 `ccsdt -> fno-uccsdtq -> cc-composite`
 
@@ -31,7 +31,18 @@
 
 从 `step2 enumerate` 开始，数值和选择控制参数存放在会话本地的 `filter_session/method_controls.yaml` 中。
 
-**[工程进度快照 / Development Snapshot](../docs/APEX_Filter_progress_snapshot.md)**
+对维护中的主线来说，`step3-6` 的 observables 只记录计算结果。benchmark
+compare 仍然可以作为独立验证工具使用，但不会再自动注入 production session
+产物。
+
+对已经闭合的 V1.0.0 主流程来说，维护中的 mainline 到：
+
+`report`
+
+当前 Fe2S2 重跑 walkthrough 位于：
+
+- [../docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
+- [../examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
 
 ---
 
@@ -176,9 +187,11 @@ apex-filter load \
 
 `filter_session/method_controls.yaml` 也会自动创建。该文件是后续方法参数（`enumerate`、`uhf`、`ccsd`、`ccsd_t`、`ccsdt`、`dmrg_basis`、`dmrg`、`fno_uccsdtq`）的会话本地控制界面。
 
-如需从输入文件开始、逐步完成每个步骤的完整 `Fe2S2(SCH3)4^{2-}` 复现指南，请参阅：
+如需从当前 fresh case 布局出发、逐步完成每个维护步骤的
+`Fe2S2(SCH3)4^{2-}` 重跑指南，请参阅：
 
-- [../examples/fe2s2/README_step_by_step.md](../examples/fe2s2/README_step_by_step.md)
+- [../docs/example.md](/Users/snh/Projects/APEX/docs/example.md)
+- [../examples/fe2s2/example.md](/Users/snh/Projects/APEX/examples/fe2s2/example.md)
 
 ### 步骤 3：运行筛选链
 
@@ -194,7 +207,7 @@ apex-filter extrapolate --session examples/fe4s4h4/filter_session
 apex-filter report    --session examples/fe4s4h4/filter_session
 ```
 
-可选的高阶分支：
+仓库中保留但不属于当前主 benchmark 路径的高阶分支：
 
 ```bash
 apex-filter fno-uccsdtq --session examples/fe4s4h4/filter_session --pick "top 2" --freeze-occ 2,4
@@ -390,22 +403,18 @@ filter_session/
 
 ## 当前范围
 
-已纳入维护路径的内容：
+已纳入维护中的 V1.0.0 路径的内容：
 
 - `load -> enumerate -> uhf -> ccsd -> ccsd-t -> ccsdt`
 - `dmrg-basis -> dmrg -> extrapolate -> report`
-- `fno-uccsdtq -> cc-composite`
 - 标准化的人工介入选择产物
 
 尚未成为完整维护工作流的内容：
 
+- `step11+` 高阶分支不属于本轮闭合的 V1.0.0 rerun / cleanup 范围
+- `fno-uccsdtq -> cc-composite` 不属于当前维护中的 benchmark 主路径
 - 大 active space（`117o/180o/285o/404o`）流水线
 - QM/MM 平均势能工作流
 - 集成到主会话 CLI 中的布居分析
 - 作为主流程步骤的 Heisenberg 拟合
 - 完整的虚轨道阈值 FNO 外推
-
-如需详细的工程状态矩阵，请参阅：
-
-- [../docs/APEX_Filter_status_matrix_and_initial_review.md](../docs/APEX_Filter_status_matrix_and_initial_review.md)
-- [../docs/APEX_Filter_progress_snapshot.md](../docs/APEX_Filter_progress_snapshot.md)

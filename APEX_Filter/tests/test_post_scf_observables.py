@@ -1,11 +1,11 @@
+"""Regression tests for post-SCF observable analysis entry points."""
+
 from pathlib import Path
 
 import pytest
 
-from apex_filter.post_scf_observables import (
-    analyze_step3_uhf_observables,
-    compute_two_s_from_s2,
-)
+from apex_filter.post_scf_observables import analyze_step3_uhf_observables
+from shared.spin_metrics import compute_two_s_from_s2
 
 
 def test_compute_two_s_from_s2_matches_chan_formula():

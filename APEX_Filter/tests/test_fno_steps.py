@@ -30,8 +30,10 @@ def test_step_fno_uccsdtq_runs_mocked_subspace_and_hast(monkeypatch, tmp_path):
     monkeypatch.setattr(SessionManager, "load_enumeration", lambda self: {"configs": [cfg]})
     monkeypatch.setattr(
         SessionManager,
-        "load_ccsdt_summary",
-        lambda self: [{"label": "BS7_235", "energy": -100.2, "converged": True, "family": "BS7"}],
+        "load_step_summary",
+        lambda self, step_name, filename: [{"label": "BS7_235", "energy": -100.2, "converged": True, "family": "BS7"}]
+        if (step_name, filename) == ("step6_ccsdt", "ccsdt_summary.json")
+        else [],
     )
 
     monkeypatch.setattr(
@@ -90,7 +92,7 @@ def test_step_fno_uccsdtq_runs_mocked_subspace_and_hast(monkeypatch, tmp_path):
 def test_step_cc_composite_builds_summary(tmp_path):
     sm = _seed_session_for_fno(tmp_path)
     sm.mark_step_completed("step11_fno_uccsdtq")
-    sm.save_ccsdt_summary([{"label": "BS7_235", "energy": -100.2, "converged": True, "family": "BS7"}])
+    sm.save_step_summary("step6_ccsdt", "ccsdt_summary.json", [{"label": "BS7_235", "energy": -100.2, "converged": True, "family": "BS7"}])
     sm.save_fno_summary(
         [
             {

@@ -9,21 +9,28 @@
 # with later layers overriding earlier ones.
 
 cluster:
-  # total_charge: -3
-  # target_spin: 0.5
-  # symmetry_group: "C1"
-  # reduction_symmetry: "C1"
-  # family_scheme: ""
-  # benchmark_profile: ""
-  # config_reduction_mode: "none"
+  # total_charge: -3          # Formal total charge of the benchmark/model system
+  # target_spin: 0.5          # Target total S value, not 2S+1
+  # symmetry_group: "C1"      # Whole-molecule point-group label
+  # reduction_symmetry: "C1"  # Downstream family-grouping label actually used by APEX_Filter
+  # family_scheme: ""         # Optional literature-specific family convention
+  # benchmark_profile: ""     # Optional literature-aligned enumeration profile
+  # config_reduction_mode: "none"  # "none" keeps all literature configs after family labeling
 
 defaults:
   projection_role_by_role:
     metal: metal_df
     bridging: bridging_p
     terminal: exclude
+    spectator: exclude
 
 groups:
+  # Typical role values:
+  #   metal | bridging | terminal | spectator
+  #
+  # Typical projection_role values:
+  #   metal_df | bridging_p | exclude
+  #
   # - selector:
   #     element: Fe
   #   assign:
@@ -48,6 +55,10 @@ groups:
   #     projection_role: exclude
 
 atoms:
+  # `label` should become the stable atom/site label used downstream.
+  # Bridging atoms should use `bridging_to: [Fe1, Fe2, ...]`.
+  # Terminal donor atoms should use `bound_to: Fe1`.
+  #
   # - atom_index: 0
   #   element: Fe
   #   label: Fe1

@@ -7,7 +7,7 @@ import numpy as np
 from pyscf import ao2mo
 
 
-def lowdin_orthonormalize(coeff: np.ndarray) -> np.ndarray:
+def _lowdin_orthonormalize(coeff: np.ndarray) -> np.ndarray:
     """Return a Lowdin-orthonormalized version of a column basis."""
     metric = 0.5 * (coeff.T @ coeff + coeff.T.conj() @ coeff.conj())
     eigvals, eigvecs = np.linalg.eigh(metric.real)
@@ -18,7 +18,7 @@ def lowdin_orthonormalize(coeff: np.ndarray) -> np.ndarray:
     return coeff @ inv_sqrt
 
 
-def build_spatial_basis(
+def _build_spatial_basis(
     *,
     dmrg_basis_npz_path: str | None,
     norb: int,
@@ -50,12 +50,12 @@ def build_spatial_basis(
         )
     spatial_guess = 0.5 * (active_a + active_b)
     try:
-        return lowdin_orthonormalize(spatial_guess)
+        return _lowdin_orthonormalize(spatial_guess)
     except ValueError:
-        return lowdin_orthonormalize(active_a)
+        return _lowdin_orthonormalize(active_a)
 
 
-def transform_integrals(fcidump_data, spatial_basis: np.ndarray):
+def _transform_integrals(fcidump_data, spatial_basis: np.ndarray):
     """Transform FCIDUMP integrals into the chosen spatial basis."""
     h1e = np.asarray(fcidump_data.h1e, dtype=float)
     h2e = np.asarray(fcidump_data.h2e, dtype=float)

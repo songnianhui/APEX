@@ -30,9 +30,11 @@ import block2  # noqa: F401
 
 import numpy as np
 from pyscf import ao2mo, lib
+from pyscf import gto, scf
 from pyscf.tools import fcidump as fd_mod
 from pyscf import dmrgscf
 from pyscf.mcscf import casci as casci_mod
+from shared.comparison import compare_energy_triplet
 
 # ── Defaults (Fe2S2) ──────────────────────────────────────────────
 CHAN_E_ACT   = -116.6056091
@@ -78,7 +80,6 @@ else:
 # ── Build a dummy mol + mf for CASCI ─────────────────────────────
 # DMRGCI needs a CASCI-compatible object. We construct a minimal
 # mol/mf pair whose only purpose is to carry the integrals.
-from pyscf import gto, scf
 
 # Dummy molecule: 1 atom, e- = nelec, same norb
 # The actual integrals will be overridden in CASCI
@@ -116,10 +117,6 @@ print("=" * 60)
 
 t0 = time.time()
 
-# Use get_h1eff/get_h2eff with overridden integrals
-# Manually compute E_active via DMRG on the FCIDUMP integrals
-from pyscf import fci as pyscf_fci
-
 # DMRGCI.kernel expects (h1e, h2e, norb, nelec)
 # We feed it directly from FCIDUMP
 result = mc.fcisolver.kernel(h1e, eri_4idx, norb, (nalpha, nbeta))
@@ -142,7 +139,19 @@ print(f"  Wall time = {t1 - t0:.1f} s")
 print("\n" + "=" * 60)
 print("COMPARISON WITH CHAN")
 print("=" * 60)
+comparison = compare_energy_triplet(
+    computed_active=e_act,
+    computed_core=ecore_real,
+    computed_total=e_total,
+    reference_active=CHAN_E_ACT,
+    reference_core=chan_ecore,
+    reference_total=CHAN_E_TOTAL,
+)
 print(f"  {'':>12} {'Chan':>20} {'Ours':>20} {'Diff':>20}")
-print(f"  {'E_active':>12} {CHAN_E_ACT:>20.12f} {e_act:>20.12f} {e_act - CHAN_E_ACT:>+20.12f}")
-print(f"  {'E_core':>12} {chan_ecore:>20.12f} {ecore_real:>20.12f} {ecore_real - chan_ecore:>+20.12f}")
-print(f"  {'E_total':>12} {CHAN_E_TOTAL:>20.12f} {e_total:>20.12f} {e_total - CHAN_E_TOTAL:>+20.12f}")
+for key in ("E_active", "E_core", "E_total"):
+    print(
+        f"  {key:>12} "
+        f"{comparison['reference'][key]:>20.12f} "
+        f"{comparison['computed'][key]:>20.12f} "
+        f"{comparison['delta'][key]:>+20.12f}"
+    )

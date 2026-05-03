@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass as _dataclass
 import json
 import os
 import re
@@ -12,11 +12,12 @@ import tempfile
 
 import numpy as np
 
-from .hdf5_state_io import save_dmrg_state_h5
-from shared.dmrg_controls import build_dmrg_sweep_schedule
+from .hdf5_state_io import _save_dmrg_state_h5
+from shared.dmrg_controls import build_dmrg_sweep_schedule as _build_dmrg_sweep_schedule
+from shared.settings_payloads import extend_settings_payload as _extend_settings_payload
 
-@dataclass
-class ReferenceDMRGResult:
+@_dataclass
+class _ReferenceDMRGResult:
     """Result of an active-space DMRG calculation for one bond dimension."""
 
     method: str
@@ -40,6 +41,7 @@ class ReferenceDMRGResult:
     dav_type: str | None = None
     wall_time_s: float | None = None
     log_path: str | None = None
+    fcidump_path: str | None = None
     reference_state_path: str | None = None
     basis_state_path: str | None = None
     scratch_dir: str | None = None
@@ -74,7 +76,7 @@ def _ensure_schedule_lists(
 ) -> tuple[list[int], list[float], list[float]]:
     if bond_dims and noises and thresholds:
         return list(map(int, bond_dims)), list(map(float, noises)), list(map(float, thresholds))
-    rebuilt_bd, rebuilt_noises, rebuilt_thr = build_dmrg_sweep_schedule(
+    rebuilt_bd, rebuilt_noises, rebuilt_thr = _build_dmrg_sweep_schedule(
         mode=schedule_mode,
         bond_dim=int(bond_dim),
         convergence_tol=1e-8,
@@ -110,7 +112,7 @@ def run_reference_dmrg(
     A dedicated Python subprocess is used to avoid macOS/conda OpenMP runtime
     conflicts between PySCF and pyblock2/block2.
     """
-    del fcidump_data  # kept in signature for compatibility with existing callers
+    del fcidump_data  # kept in signature for call-shape symmetry with sibling reference drivers
 
     os.makedirs(scratch, exist_ok=True)
     with tempfile.NamedTemporaryFile(prefix="apex_dmrg_", suffix=".json", dir=scratch, delete=False) as fh:
@@ -207,6 +209,7 @@ def run_reference_dmrg(
         if payload.get("energy") is None and parsed_energy is not None:
             payload["energy"] = parsed_energy
         payload["log_path"] = os.path.abspath(log_path) if log_path else None
+        payload["fcidump_path"] = os.path.abspath(fcidump_path)
         payload["reference_state_path"] = os.path.abspath(uhf_npz_path)
         payload["basis_state_path"] = os.path.abspath(dmrg_basis_npz_path)
         payload["scratch_dir"] = os.path.abspath(scratch)
@@ -218,7 +221,7 @@ def run_reference_dmrg(
             noises=payload.get("noises"),
             thresholds=payload.get("thresholds"),
         )
-        return ReferenceDMRGResult(**payload)
+        return _ReferenceDMRGResult(**payload)
 
     if parsed_energy is not None:
         uhf_energy = _read_uhf_energy(uhf_npz_path)
@@ -230,7 +233,7 @@ def run_reference_dmrg(
             noises=[],
             thresholds=[],
         )
-        return ReferenceDMRGResult(
+        return _ReferenceDMRGResult(
             method="DMRG",
             energy=parsed_energy,
             correlation_energy=parsed_energy - uhf_energy,
@@ -251,6 +254,7 @@ def run_reference_dmrg(
             dav_rel_conv_thrd=dav_rel_conv_thrd,
             dav_type=dav_type,
             log_path=os.path.abspath(log_path) if log_path else None,
+            fcidump_path=os.path.abspath(fcidump_path),
             reference_state_path=os.path.abspath(uhf_npz_path),
             basis_state_path=os.path.abspath(dmrg_basis_npz_path),
             scratch_dir=os.path.abspath(scratch),
@@ -261,8 +265,24 @@ def run_reference_dmrg(
     raise RuntimeError("DMRG worker exited without producing a result payload or parsable energy trace")
 
 
-def save_reference_dmrg_result(result: ReferenceDMRGResult, npz_path: str):
-    """Save active-space DMRG results in parser-compatible NPZ schema."""
+def _save_reference_dmrg_result(
+    result: _ReferenceDMRGResult,
+    npz_path: str,
+    *,
+    label: str | None = None,
+    family: str | None = None,
+    settings_payload: dict | None = None,
+):
+    """Save active-space DMRG results in the canonical NPZ sidecar schema."""
+    settings_payload = _extend_settings_payload(
+        settings_payload,
+        n_sweeps=result.n_sweeps,
+        twosite_to_onesite=result.twosite_to_onesite,
+        dav_max_iter=result.dav_max_iter,
+        dav_def_max_size=result.dav_def_max_size,
+        dav_rel_conv_thrd=result.dav_rel_conv_thrd,
+        dav_type=result.dav_type,
+    )
     payload = {
         "uhf_energy": result.uhf_energy,
         "dmrg_total": result.energy,
@@ -285,11 +305,14 @@ def save_reference_dmrg_result(result: ReferenceDMRGResult, npz_path: str):
     if result.s_squared is not None:
         payload["spin_sq"] = result.s_squared
     if npz_path.endswith(".npz"):
-        save_dmrg_state_h5(
+        _save_dmrg_state_h5(
             npz_path[:-4] + ".h5",
             result=result,
+            label=label,
+            family=family,
             reference_state_path=result.reference_state_path,
             basis_state_path=result.basis_state_path,
             scratch_dir=result.scratch_dir,
+            settings_payload=settings_payload,
         )
     np.savez(npz_path, **payload)

@@ -13,10 +13,14 @@ import time
 import block2  # noqa: F401  # must precede pyscf/pyblock2 runtime usage
 from pyscf.tools import fcidump as fcidump_mod
 
-from .CAS_loader import load_fcidump
-from .dmrg_integral_transform import build_spatial_basis, transform_integrals
-from .reference_ucc import load_reference_mf_from_npz
-from shared.dmrg_controls import build_dmrg_sweep_schedule, infer_pyblock2_benchmark_controls
+from .dmrg_integral_transform import _build_spatial_basis, _transform_integrals
+from shared.dmrg_controls import (
+    build_dmrg_sweep_schedule as _build_dmrg_sweep_schedule,
+    infer_pyblock2_benchmark_controls as _infer_pyblock2_benchmark_controls,
+)
+from shared.dmrg_solvers import run_sz_dmrg as _run_sz_dmrg
+from shared.fcidump_io import load_fcidump as _load_fcidump
+from shared.reference_states import load_reference_mf_from_npz as _load_reference_mf_from_npz
 
 def _prepare_working_fcidump(
     *,
@@ -27,17 +31,17 @@ def _prepare_working_fcidump(
 ):
     """Return (fcidump_data, working_fcidump_path, cleanup_path_or_none)."""
     os.makedirs(scratch, exist_ok=True)
-    fcidump_data = load_fcidump(fcidump_path)
+    fcidump_data = _load_fcidump(fcidump_path)
     mode = (basis_mode or "step7_paired").strip().lower()
     if mode == "original_identity":
         return fcidump_data, os.path.abspath(fcidump_path), None
 
-    spatial_basis = build_spatial_basis(
+    spatial_basis = _build_spatial_basis(
         dmrg_basis_npz_path=dmrg_basis_npz_path,
         norb=fcidump_data.norb,
         basis_mode=mode,
     )
-    h1e_t, h2e_t = transform_integrals(fcidump_data, spatial_basis)
+    h1e_t, h2e_t = _transform_integrals(fcidump_data, spatial_basis)
 
     with tempfile.NamedTemporaryFile(
         prefix="apex_dmrg_basis_",
@@ -180,14 +184,14 @@ def _run_dmrg_pyblock2_sz(
         orb_sym=getattr(driver, "orb_sym", None),
     )
     mpo = driver.get_qc_mpo(h1e=driver.h1e, g2e=driver.g2e, ecore=driver.ecore)
-    bond_dims, noises, thresholds = build_dmrg_sweep_schedule(
+    bond_dims, noises, thresholds = _build_dmrg_sweep_schedule(
         mode=schedule_mode,
         bond_dim=bond_dim,
         convergence_tol=convergence_tol,
         n_sweeps=n_sweeps,
     )
     inferred_controls = (
-        infer_pyblock2_benchmark_controls(
+        _infer_pyblock2_benchmark_controls(
             bond_dim=bond_dim,
             convergence_tol=convergence_tol,
         )
@@ -263,7 +267,7 @@ def _run_dmrg_pyblock2_sz(
     solver_output = capture.getvalue()
     if solver_output:
         print(solver_output, end="" if solver_output.endswith("\n") else "\n")
-    mf = load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
+    mf = _load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
 
     s_squared = None
     try:
@@ -321,9 +325,7 @@ def _run_dmrg_pyscf_dmrgci_sz(
     dav_type: str | None,
 ):
     """Run one active-space DMRG solve via PySCF DMRGCI in the working basis."""
-    from apex_cas.CAS_tester import _run_sz_dmrg
-
-    mf = load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
+    mf = _load_reference_mf_from_npz(fcidump_data, uhf_npz_path)
     capture = io.StringIO()
     t0 = time.time()
     with contextlib.redirect_stdout(capture), contextlib.redirect_stderr(capture):
@@ -463,7 +465,7 @@ def _parse_args():
     return parser.parse_args()
 
 
-def main():
+def _main():
     args = _parse_args()
     result = _run_dmrg(
         backend=args.backend,
@@ -489,4 +491,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    _main()

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .reference_ucc import load_reference_mf_from_npz
+from shared.reference_states import load_reference_mf_from_npz
 
 
 @dataclass

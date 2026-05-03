@@ -1,5 +1,6 @@
-"""Regression tests for active-space HAST-UCC on FCIDUMP Hamiltonians."""
+"""Regression tests for active-space HAST-UCC and its internal persistence seam."""
 
+import json
 import os
 import sys
 import types
@@ -8,11 +9,9 @@ import h5py
 import numpy as np
 import pytest
 
-from apex_filter.CAS_loader import FCIDUMPData
-from apex_filter.reference_hast_ucc import run_reference_hast_ucc, save_reference_hast_result
-from apex_filter.reference_uhf import build_fake_mol, build_reference_uhf_solver
-from apex_filter.result_parser import parse_npz_result
-
+from apex_filter.reference_hast_ucc import _save_reference_hast_result, run_reference_hast_ucc
+from shared.active_space_reference import build_fake_mol, build_reference_uhf_solver
+from shared.fcidump_io import FCIDUMPData
 
 def _make_toy_fcidump():
     return FCIDUMPData(
@@ -147,19 +146,31 @@ def test_run_reference_hast_uccsdt_on_toy_hamiltonian(tmp_path, monkeypatch):
     assert result.nominal_backend == "hast_ucc_t3"
 
 
-def test_saved_reference_hast_result_roundtrips_through_parser(tmp_path, monkeypatch):
+def test_internal_hast_result_writer_roundtrips_through_parser(tmp_path, monkeypatch):
     _install_fake_pyhast(monkeypatch)
     fcid = _make_toy_fcidump()
     uhf_npz, _ = _write_toy_uhf_npz(tmp_path, fcid)
     result = run_reference_hast_ucc(fcid, uhf_npz, t_order=3)
 
     out_npz = os.path.join(tmp_path, "toy_ccsdt_results.npz")
-    save_reference_hast_result(result, out_npz)
+    _save_reference_hast_result(
+        result,
+        out_npz,
+        label="BS7|235",
+        family="BS7",
+        settings_payload={
+            "control_source": "/tmp/method_controls.yaml",
+            "theory": "UCCSDT",
+            "basis_set": "cc-pVDZ",
+            "max_cycle": 777,
+            "lambda_max_cycle": 222,
+        },
+    )
 
-    parsed = parse_npz_result(out_npz)
-    assert parsed["method"] == "UCCSDT"
-    assert parsed["energy"] == pytest.approx(-12.125)
-    assert parsed["correlation_energy"] == pytest.approx(-0.125)
+    data = np.load(out_npz, allow_pickle=True)
+    assert float(data["ccsdt_total"]) == pytest.approx(-12.125)
+    assert float(data["ccsdt_corr"]) == pytest.approx(-0.125)
+    assert bool(data["ccsdt_converged"]) is True
     out_h5 = out_npz[:-4] + ".h5"
     assert os.path.exists(out_h5)
     with h5py.File(out_h5, "r") as f:
@@ -167,6 +178,17 @@ def test_saved_reference_hast_result_roundtrips_through_parser(tmp_path, monkeyp
         assert "orbitals" in f
         assert "density_matrices" in f
         assert f["metadata"].attrs["artifact_type"] == "apex_filter_step6_hast_ucc_state"
+        assert f["metadata"].attrs["label"] == "BS7|235"
+        assert f["metadata"].attrs["family"] == "BS7"
+        assert "settings_json" in f["metadata"].attrs
+        settings = json.loads(f["metadata"].attrs["settings_json"])
+        assert settings["control_source"] == "/tmp/method_controls.yaml"
+        assert settings["theory"] == "UCCSDT"
+        assert settings["requested_config"]["basis_set"] == "cc-pVDZ"
+        assert settings["effective_method"]["theory"] == "UCCSDT"
+        assert "basis_set" not in settings["effective_parameters"]
+        assert settings["effective_parameters"]["max_cycle"] == 777
+        assert settings["effective_parameters"]["lambda_max_cycle"] == 222
 
 
 def test_run_reference_hast_ucc_passes_convergence_controls(tmp_path, monkeypatch):

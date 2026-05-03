@@ -1,16 +1,17 @@
-"""Selection mechanism for the APEX_Filter interactive pipeline.
+"""Pick-spec parsing and application helpers for the staged filter workflow.
 
-Parses ``--pick`` arguments and applies selection strategies to per-step
-result summaries.
+Canonical step orchestrators consume these helpers internally to support
+``--pick``-style selection control. File-loading helpers in this module are
+workflow support code, not a public package surface.
 """
 
 import csv
 import json
 import os
-from collections import defaultdict
+from collections import defaultdict as _defaultdict
 
 
-def parse_pick_arg(pick_str: str) -> dict:
+def _parse_pick_arg(pick_str: str) -> dict:
     """Parse a ``--pick`` CLI string into a structured spec.
 
     Supported forms::
@@ -41,7 +42,7 @@ def parse_pick_arg(pick_str: str) -> dict:
     elif mode == "labels":
         if len(parts) < 2:
             raise ValueError("'labels' requires a comma-separated list")
-        return {"mode": "labels", "labels": [l.strip() for l in parts[1].split(",")]}
+        return {"mode": "labels", "labels": [label.strip() for label in parts[1].split(",")]}
     elif mode in ("energy-window", "energy_window"):
         if len(parts) < 2:
             raise ValueError("'energy-window' requires a float value")
@@ -54,13 +55,13 @@ def parse_pick_arg(pick_str: str) -> dict:
         raise ValueError(f"Unknown pick mode: '{mode}'")
 
 
-def apply_pick(pick_spec: dict, summary: list[dict]) -> list[str]:
+def _apply_pick(pick_spec: dict, summary: list[dict]) -> list[str]:
     """Apply a selection strategy to a step summary, returning chosen labels.
 
     Parameters
     ----------
     pick_spec : dict
-        Output of ``parse_pick_arg()``.
+        Output of ``_parse_pick_arg()``.
     summary : list[dict]
         Each entry: ``{"label": str, "energy": float, "converged": bool, "family": str}``.
         Assumed sorted by *energy* ascending (caller's responsibility).
@@ -84,7 +85,7 @@ def apply_pick(pick_spec: dict, summary: list[dict]) -> list[str]:
 
     elif mode == "top_per_family":
         n = pick_spec["n"]
-        families = defaultdict(list)
+        families = _defaultdict(list)
         for s in converged:
             fam = s.get("family", "")
             families[fam].append(s)

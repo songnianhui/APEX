@@ -1,21 +1,25 @@
-"""Regression tests for reference-UHF initial-guess handling."""
+"""Regression tests for Step 3 reference-UHF construction and initial guesses."""
 
+import json
 import os
+from pathlib import Path
 
 import numpy as np
+import pytest
 
-from apex_filter.models import CAS, ClusterInfo, MetalCenter
+from shared.models import CAS, ClusterInfo, MetalCenter
+from shared.settings_payloads import build_base_settings_payload
 from apex_filter.session import SessionManager, _sanitize_label
 from apex_filter.reference_uhf import (
     _compute_high_spin_ms2,
     _apply_d_orbital_encoding,
+    _parse_orbital_metal_mapping,
     _sanitize_ms2_for_nelec,
     _swap_orbital_spin,
     _warn_if_spin_sites_unmapped,
     converge_reference_uhf,
-    parse_orbital_metal_mapping,
 )
-from apex_filter.selection_guidance import attach_display_labels
+from apex_filter.selection_guidance import _attach_display_labels
 from apex_filter.steps_reference_uhf import step_uhf
 
 
@@ -53,7 +57,7 @@ def test_parse_orbital_metal_mapping_only_marks_metal_d_orbitals():
         ]
     )
 
-    mapping = parse_orbital_metal_mapping(cas, cluster)
+    mapping = _parse_orbital_metal_mapping(cas, cluster)
 
     assert mapping[0] == 0
     assert mapping[1] is None
@@ -75,7 +79,7 @@ def test_parse_orbital_metal_mapping_accepts_prefixed_labels():
         ]
     )
 
-    mapping = parse_orbital_metal_mapping(cas, cluster)
+    mapping = _parse_orbital_metal_mapping(cas, cluster)
 
     assert mapping[0] == 0
     assert mapping[1] == 1
@@ -138,7 +142,7 @@ def test_compute_high_spin_ms2_uses_config_oxidation(monkeypatch):
     assert _compute_high_spin_ms2(cluster, config) == 9
 
 
-def test_attach_display_labels_prefers_final_state_signature_without_upstream():
+def test_internal_attach_display_labels_prefers_final_state_signature_without_upstream():
     rows = [
         {
             "label": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:d1",
@@ -146,12 +150,12 @@ def test_attach_display_labels_prefers_final_state_signature_without_upstream():
         }
     ]
 
-    attach_display_labels(rows, None)
+    _attach_display_labels(rows, None)
 
     assert rows[0]["display_label"] == "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2"
 
 
-def test_attach_display_labels_replaces_stale_display_label_equal_to_label():
+def test_internal_attach_display_labels_replaces_stale_display_label_equal_to_label():
     rows = [
         {
             "label": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:d1",
@@ -160,7 +164,7 @@ def test_attach_display_labels_replaces_stale_display_label_equal_to_label():
         }
     ]
 
-    attach_display_labels(rows, None)
+    _attach_display_labels(rows, None)
 
     assert rows[0]["display_label"] == "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2"
 
@@ -220,10 +224,10 @@ def test_converge_reference_uhf_uses_high_spin_then_target_spin(monkeypatch):
         )
         return FakeMF(tag=tag, converged=True)
 
-    monkeypatch.setattr("apex_filter.reference_uhf.build_fake_mol", fake_build_fake_mol)
-    monkeypatch.setattr("apex_filter.reference_uhf.build_reference_uhf_solver", fake_build_solver)
+    monkeypatch.setattr("apex_filter.reference_uhf._build_fake_mol", fake_build_fake_mol)
+    monkeypatch.setattr("apex_filter.reference_uhf._build_reference_uhf_solver", fake_build_solver)
     monkeypatch.setattr(
-        "apex_filter.reference_uhf.parse_orbital_metal_mapping",
+        "apex_filter.reference_uhf._parse_orbital_metal_mapping",
         lambda cas, cluster: {0: 0, 1: 1},
     )
     monkeypatch.setattr(
@@ -336,10 +340,10 @@ def test_converge_reference_uhf_preserves_spin_square_when_not_converged(monkeyp
         # high-spin converges; BS target remains unconverged
         return FakeMF(converged=(len(builds) == 1))
 
-    monkeypatch.setattr("apex_filter.reference_uhf.build_fake_mol", fake_build_fake_mol)
-    monkeypatch.setattr("apex_filter.reference_uhf.build_reference_uhf_solver", fake_build_solver)
+    monkeypatch.setattr("apex_filter.reference_uhf._build_fake_mol", fake_build_fake_mol)
+    monkeypatch.setattr("apex_filter.reference_uhf._build_reference_uhf_solver", fake_build_solver)
     monkeypatch.setattr(
-        "apex_filter.reference_uhf.parse_orbital_metal_mapping",
+        "apex_filter.reference_uhf._parse_orbital_metal_mapping",
         lambda cas, cluster: {0: 0, 1: 1},
     )
     monkeypatch.setattr(
@@ -449,10 +453,10 @@ def test_converge_reference_uhf_can_apply_newton_refinement(monkeypatch):
         builds.append(mol_fake.spin)
         return FakeMF(converged=(len(builds) == 1), energy=-2.34 if len(builds) > 1 else -1.23, spin_sq=4.67)
 
-    monkeypatch.setattr("apex_filter.reference_uhf.build_fake_mol", fake_build_fake_mol)
-    monkeypatch.setattr("apex_filter.reference_uhf.build_reference_uhf_solver", fake_build_solver)
+    monkeypatch.setattr("apex_filter.reference_uhf._build_fake_mol", fake_build_fake_mol)
+    monkeypatch.setattr("apex_filter.reference_uhf._build_reference_uhf_solver", fake_build_solver)
     monkeypatch.setattr(
-        "apex_filter.reference_uhf.parse_orbital_metal_mapping",
+        "apex_filter.reference_uhf._parse_orbital_metal_mapping",
         lambda cas, cluster: {0: 0, 1: 1},
     )
     monkeypatch.setattr(
@@ -515,6 +519,10 @@ def test_step_uhf_rejects_energy_rank_pick_before_energies_exist(monkeypatch, tm
         def __init__(self, session_dir):
             self.session_dir = session_dir
 
+        @property
+        def method_controls_path(self):
+            return str(Path(self.session_dir) / "method_controls.yaml")
+
         def require_previous(self, *args, **kwargs):
             return None
 
@@ -534,7 +542,7 @@ def test_step_uhf_rejects_energy_rank_pick_before_energies_exist(monkeypatch, tm
             return {"configs": []}
 
     monkeypatch.setattr(
-        "apex_filter.steps_reference_uhf.SessionManager",
+        "apex_filter.steps_reference_uhf._SessionManager",
         FakeSessionManager,
     )
 
@@ -552,6 +560,10 @@ def test_step_uhf_forwards_stabilization_controls(monkeypatch, tmp_path):
     class FakeSessionManager:
         def __init__(self, session_dir):
             self.session_dir = session_dir
+
+        @property
+        def method_controls_path(self):
+            return str(Path(self.session_dir) / "method_controls.yaml")
 
         def require_previous(self, *args, **kwargs):
             return None
@@ -573,16 +585,27 @@ def test_step_uhf_forwards_stabilization_controls(monkeypatch, tmp_path):
             cfg = type("Cfg", (), {"label": "L1", "spin_isomer": spin_isomer})()
             return {"configs": [cfg]}
 
-        def save_uhf_picked(self, labels):
+        def _build_step_settings_payload(self, source_settings, *, theory: str, **overrides):
+            return build_base_settings_payload(
+                source_settings,
+                control_source=self.method_controls_path,
+                theory=theory,
+                **overrides,
+            )
+
+        def save_step_picked(self, step_name, labels):
+            assert step_name == "step3_uhf"
             captured["picked"] = labels
 
         def save_uhf_result(self, label, result, **kwargs):
             captured["result_label"] = label
 
-        def save_uhf_summary(self, results):
+        def save_step_summary(self, step_name, filename, results, mark_completed=True):
+            assert step_name == "step3_uhf"
+            assert filename == "uhf_summary.json"
             captured["summary"] = results
 
-        def rebuild_uhf_summary(self, configs, current_results=None):
+        def _rebuild_uhf_summary(self, configs, current_results=None):
             return current_results or []
 
     def fake_converge(cas, cfg, fcid, ci, **kwargs):
@@ -605,15 +628,15 @@ def test_step_uhf_forwards_stabilization_controls(monkeypatch, tmp_path):
         )()
 
     monkeypatch.setattr(
-        "apex_filter.steps_reference_uhf.SessionManager",
+        "apex_filter.steps_reference_uhf._SessionManager",
         FakeSessionManager,
     )
     monkeypatch.setattr(
-        "apex_filter.steps_reference_uhf.converge_reference_uhf",
+        "apex_filter.steps_reference_uhf._converge_reference_uhf",
         fake_converge,
     )
     monkeypatch.setattr(
-        "apex_filter.steps_reference_uhf.write_selection_artifacts",
+        "apex_filter.steps_reference_uhf._write_selection_artifacts",
         lambda *args, **kwargs: captured.setdefault("selection_kwargs", kwargs),
     )
 
@@ -650,6 +673,9 @@ def test_step_uhf_forwards_stabilization_controls(monkeypatch, tmp_path):
             "family": "BS1",
             "last_delta_e": -1e-6,
             "energy_tail": [-1.1, -1.0],
+            "two_s": None,
+            "two_sz_fe1": None,
+            "two_sz_fe2": None,
             "final_d_basin": {"Fe1": "dxy"},
             "final_site_spin_proxy": {"Fe1": -3.0, "Fe2": 4.0},
             "final_state_signature": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dxy",
@@ -658,7 +684,117 @@ def test_step_uhf_forwards_stabilization_controls(monkeypatch, tmp_path):
     assert captured["selection_kwargs"]["keep_default"] == "1"
 
 
-def test_session_rebuild_uhf_summary_keeps_all_saved_npzs(tmp_path):
+def test_step_uhf_writes_post_scf_observables_when_inputs_available(monkeypatch, tmp_path):
+    captured = {}
+    session_dir = tmp_path / "session"
+    results_dir = session_dir / "step3_uhf" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    class FakeSessionManager:
+        def __init__(self, session_dir):
+            self.session_dir = session_dir
+
+        @property
+        def method_controls_path(self):
+            return str(Path(self.session_dir) / "method_controls.yaml")
+
+        def require_previous(self, *args, **kwargs):
+            return None
+
+        def resolve_method_controls(self, section, defaults, cli_overrides):
+            merged = dict(defaults)
+            merged.update(cli_overrides)
+            return merged
+
+        def load_load_state(self):
+            return {
+                "cas": CAS(n_electrons=2, n_orbitals=2),
+                "cluster_info": ClusterInfo(),
+                "fcidump_data": object(),
+                "fcidump_path": str(tmp_path / "case" / "outputs" / "fcidump" / "FCIDUMP.test"),
+                "config_path": str(tmp_path / "filter_settings.yaml"),
+            }
+
+        def load_enumeration(self):
+            spin_isomer = type("Iso", (), {"family": "BS1"})()
+            cfg = type("Cfg", (), {"label": "L1", "spin_isomer": spin_isomer})()
+            return {"configs": [cfg]}
+
+        def _build_step_settings_payload(self, source_settings, *, theory: str, **overrides):
+            return build_base_settings_payload(
+                source_settings,
+                control_source=self.method_controls_path,
+                theory=theory,
+                **overrides,
+            )
+
+        def save_step_picked(self, step_name, labels):
+            assert step_name == "step3_uhf"
+            captured["picked"] = labels
+
+        def save_uhf_result(self, label, result, **kwargs):
+            captured["result_label"] = label
+
+        def save_step_summary(self, step_name, filename, results, mark_completed=True):
+            assert step_name == "step3_uhf"
+            assert filename == "uhf_summary.json"
+            captured["summary"] = results
+
+        def _rebuild_uhf_summary(self, configs, current_results=None):
+            return current_results or []
+
+    def fake_converge(cas, cfg, fcid, ci, **kwargs):
+        return type(
+            "Res",
+            (),
+            {
+                "energy": -1.0,
+                "converged": True,
+                "s_squared": 0.75,
+                "diagnostics": {
+                    "final_delta_e": -1e-6,
+                    "energy_tail": [-1.1, -1.0],
+                    "final_d_basin": {"Fe1": "dxy"},
+                    "final_site_spin_proxy": {"Fe1": -3.0, "Fe2": 4.0},
+                    "final_state_signature": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dxy",
+                },
+            },
+        )()
+
+    def fake_observables(**kwargs):
+        captured["observable_kwargs"] = kwargs
+        return {
+            "two_s": 2.5,
+            "two_sz_by_metal_label": {"Fe1": -4.2, "Fe2": 4.2},
+        }
+
+    monkeypatch.setattr("apex_filter.steps_reference_uhf._SessionManager", FakeSessionManager)
+    monkeypatch.setattr("apex_filter.steps_reference_uhf._converge_reference_uhf", fake_converge)
+    monkeypatch.setattr("apex_filter.steps_reference_uhf._analyze_step3_uhf_observables", fake_observables)
+    monkeypatch.setattr("apex_filter.steps_reference_uhf._write_selection_artifacts", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "apex_filter.steps_reference_uhf._build_case_observable_inputs",
+        lambda state, cfg: {
+            "xyz_path": str(tmp_path / "fe2s2.xyz"),
+            "cluster_info_path": str(tmp_path / "cluster.yaml"),
+            "cas_settings_path": str(tmp_path / "cas.yaml"),
+            "cas_data_h5_path": str(tmp_path / "cas_data.h5"),
+            "label": cfg.label,
+            "family": cfg.spin_isomer.family if cfg.spin_isomer else "",
+        },
+    )
+
+    step_uhf(str(session_dir), pick="all")
+
+    assert captured["summary"][0]["two_s"] == pytest.approx(2.5)
+    assert captured["summary"][0]["two_sz_fe1"] == pytest.approx(-4.2)
+    assert captured["summary"][0]["two_sz_fe2"] == pytest.approx(4.2)
+    assert captured["observable_kwargs"]["step3_h5_path"].endswith("L1_uhf.h5")
+    assert "chan_benchmark_json" not in captured["observable_kwargs"]
+    assert (results_dir / "L1_post_scf_observables.json").exists()
+
+
+def test_session_internal_rebuild_uhf_summary_keeps_all_saved_npzs(tmp_path):
     sm = SessionManager(str(tmp_path / "session"))
     sm.create()
 
@@ -686,7 +822,7 @@ def test_session_rebuild_uhf_summary_keeps_all_saved_npzs(tmp_path):
     sm.save_uhf_result(cfg1.label, Res(-1.0, True, 0.75, "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2"))
     sm.save_uhf_result(cfg2.label, Res(-2.0, True, 0.80, "Fe1↑Fe2↓|Fe1(III)+Fe2(II)|Fe2:dz^2"))
 
-    rebuilt = sm.rebuild_uhf_summary([cfg1, cfg2], current_results=[
+    rebuilt = sm._rebuild_uhf_summary([cfg1, cfg2], current_results=[
         {
             "label": cfg1.label,
             "display_label": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2",
@@ -707,7 +843,7 @@ def test_session_rebuild_uhf_summary_keeps_all_saved_npzs(tmp_path):
     assert rebuilt[1]["display_label"] == "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2"
 
 
-def test_session_rebuild_uhf_summary_can_read_h5_only(tmp_path):
+def test_session_internal_rebuild_uhf_summary_can_read_h5_only(tmp_path):
     sm = SessionManager(str(tmp_path / "session"))
     sm.create()
 
@@ -734,7 +870,48 @@ def test_session_rebuild_uhf_summary_can_read_h5_only(tmp_path):
     results_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
     os.remove(os.path.join(results_dir, f"{_sanitize_label(cfg.label)}_uhf.npz"))
 
-    rebuilt = sm.rebuild_uhf_summary([cfg], current_results=[])
+    rebuilt = sm._rebuild_uhf_summary([cfg], current_results=[])
     assert len(rebuilt) == 1
     assert rebuilt[0]["label"] == cfg.label
     assert rebuilt[0]["final_state_signature"] == "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2"
+
+
+def test_session_internal_rebuild_uhf_summary_reads_post_scf_sidecar(tmp_path):
+    sm = SessionManager(str(tmp_path / "session"))
+    sm.create()
+
+    iso = type("Iso", (), {"family": "BS1"})()
+    cfg = type("Cfg", (), {"label": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:d1", "spin_isomer": iso})()
+
+    class Res:
+        def __init__(self):
+            self.energy = -1.0
+            self.converged = True
+            self.s_squared = 0.75
+            self.mo_coeff = (np.eye(2), np.eye(2))
+            self.mo_occ = (np.array([1.0, 0.0]), np.array([1.0, 0.0]))
+            self.mo_energy = (np.array([-1.0, 0.5]), np.array([-1.0, 0.5]))
+            self.dm = (np.eye(2), np.eye(2))
+            self.diagnostics = {
+                "final_delta_e": -1e-9,
+                "final_state_signature": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2",
+                "final_d_basin": {"Fe1": "dz^2"},
+                "final_site_spin_proxy": {"Fe1": -3.0, "Fe2": 4.0},
+            }
+
+    sm.save_uhf_result(cfg.label, Res())
+    results_dir = os.path.join(sm.session_dir, "step3_uhf", "results")
+    safe = _sanitize_label(cfg.label)
+    with open(os.path.join(results_dir, f"{safe}_post_scf_observables.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "two_s": 2.5,
+                "two_sz_by_metal_label": {"Fe1": -4.2, "Fe2": 4.2},
+            },
+            f,
+        )
+
+    rebuilt = sm._rebuild_uhf_summary([cfg], current_results=[])
+    assert rebuilt[0]["two_s"] == pytest.approx(2.5)
+    assert rebuilt[0]["two_sz_fe1"] == pytest.approx(-4.2)
+    assert rebuilt[0]["two_sz_fe2"] == pytest.approx(4.2)

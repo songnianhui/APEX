@@ -1,4 +1,4 @@
-"""Regression tests for setup/enumeration contracts before step3."""
+"""Regression tests for Step 1/Step 2 setup and enumeration contracts."""
 
 import copy
 from pathlib import Path
@@ -7,17 +7,14 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-try:
-    from apex_cas import load_cas_settings_file
-except ImportError:
-    from shared.setting_utils import load_cas_settings_file
-from apex_cas import parse_structure
+from shared.setting_utils import load_cas_settings_file
+from shared.structure_parser import parse_structure
 from apex_filter.elec_spin_config_generator import (
+    _summarize_enumeration_layers,
     canonicalize_config_spin_labels,
     generate_all_configs,
-    summarize_enumeration_layers,
 )
-from apex_filter.models import (
+from shared.models import (
     CAS,
     ClusterInfo,
     ComputationSettings,
@@ -27,7 +24,7 @@ from apex_filter.models import (
     SpinIsomer,
 )
 from apex_filter.session import SessionManager
-from apex_filter.selection_guidance import write_selection_artifacts
+from apex_filter.selection_guidance import _write_selection_artifacts
 from apex_filter.steps_setup import _validate_active_space_inputs
 from apex_filter.steps_enumeration import step_enumerate
 
@@ -44,7 +41,7 @@ def test_validate_active_space_inputs_rejects_mismatched_dimensions():
         raise AssertionError("Expected CAS/FCIDUMP mismatch to raise ValueError")
 
 
-def test_save_load_state_normalizes_config_path(tmp_path):
+def test_step1_state_persistence_normalizes_config_path(tmp_path):
     sm = SessionManager(str(tmp_path / "session"))
     sm.create()
 
@@ -75,10 +72,11 @@ def test_save_load_state_normalizes_config_path(tmp_path):
     assert "FCIDUMP.demo" in fcidump_ref
     assert "\"stage\"" not in cas_meta
     assert "\"level\"" not in cas_meta
+    assert "bootstrap_settings_snapshot" in settings_payload
     assert "apex_cas_provenance" in settings_payload
 
 
-def test_session_enumeration_roundtrip_preserves_integer_site_keys(tmp_path):
+def test_step2_enumeration_roundtrip_preserves_integer_site_keys(tmp_path):
     sm = SessionManager(str(tmp_path / "session"))
     sm.create()
 
@@ -113,7 +111,7 @@ def test_session_enumeration_roundtrip_preserves_integer_site_keys(tmp_path):
 
 def test_step2_worklist_can_be_prefilled_with_keep_flags(tmp_path):
     step_dir = tmp_path / "step2_enumerate"
-    write_selection_artifacts(
+    _write_selection_artifacts(
         str(step_dir),
         step_name="Step 2 enumerate",
         next_step_name="uhf",
@@ -180,19 +178,19 @@ def test_step_enumerate_uses_method_controls(tmp_path, monkeypatch):
         return [config]
 
     monkeypatch.setattr(
-        "apex_filter.elec_spin_config_generator.generate_all_configs",
+        "apex_filter.steps_enumeration._generate_all_configs",
         fake_generate_all_configs,
     )
     monkeypatch.setattr(
-        "apex_filter.elec_spin_config_generator.canonicalize_config_spin_labels",
+        "apex_filter.steps_enumeration._canonicalize_config_spin_labels",
         lambda configs, ci: (configs, [spin_isomer], []),
     )
     monkeypatch.setattr(
-        "apex_filter.elec_spin_config_generator.reduce_configs_by_symmetry",
+        "apex_filter.steps_enumeration._reduce_configs_by_symmetry",
         lambda configs, ci: configs,
     )
     monkeypatch.setattr(
-        "apex_filter.elec_spin_config_generator.summarize_enumeration_layers",
+        "apex_filter.steps_enumeration._summarize_enumeration_layers",
         lambda raw, reduced, spin_isomers, families: {
             "raw_spin_patterns": 1,
             "spin_families": 1,
@@ -209,7 +207,7 @@ def test_step_enumerate_uses_method_controls(tmp_path, monkeypatch):
     assert captured["forced_oxidation"] == {0: 3}
 
 
-def test_session_rebuild_ccsd_summary_keeps_all_saved_npzs(tmp_path):
+def test_session_internal_rebuild_ccsd_summary_keeps_all_saved_npzs(tmp_path):
     sm = SessionManager(str(tmp_path / "session"))
     sm.create()
 
@@ -219,7 +217,7 @@ def test_session_rebuild_ccsd_summary_keeps_all_saved_npzs(tmp_path):
     cfg2 = type("Cfg", (), {"label": "Fe1↑Fe2↓|Fe1(III)+Fe2(II)|Fe2:d1", "spin_isomer": iso2})()
 
     np.savez(
-        sm.ccsd_scripts_dir + "/Fe1↓Fe2↑_Fe1(II)+Fe2(III)_Fe1:d1_ccsd_results.npz",
+        sm.step_artifact_dir("step4_ccsd", "scripts") + "/Fe1↓Fe2↑_Fe1(II)+Fe2(III)_Fe1:d1_ccsd_results.npz",
         ccsd_total=-1.0,
         ccsd_corr=-0.1,
         ccsd_converged=True,
@@ -229,7 +227,7 @@ def test_session_rebuild_ccsd_summary_keeps_all_saved_npzs(tmp_path):
         two_sz_fe2=4.2,
     )
     np.savez(
-        sm.ccsd_scripts_dir + "/Fe1↑Fe2↓_Fe1(III)+Fe2(II)_Fe2:d1_ccsd_results.npz",
+        sm.step_artifact_dir("step4_ccsd", "scripts") + "/Fe1↑Fe2↓_Fe1(III)+Fe2(II)_Fe2:d1_ccsd_results.npz",
         ccsd_total=-2.0,
         ccsd_corr=-0.2,
         ccsd_converged=True,
@@ -239,7 +237,7 @@ def test_session_rebuild_ccsd_summary_keeps_all_saved_npzs(tmp_path):
         two_sz_fe2=-4.1,
     )
 
-    rebuilt = sm.rebuild_ccsd_summary(
+    rebuilt = sm._rebuild_ccsd_summary(
         [cfg1, cfg2],
         upstream_summary=[
             {"label": cfg1.label, "display_label": "Fe1↓Fe2↑|Fe1(II)+Fe2(III)|Fe1:dz^2"},
@@ -291,11 +289,11 @@ def test_generate_all_configs_respects_target_sz_override(monkeypatch):
         ]
 
     monkeypatch.setattr(
-        "apex_filter.elec_spin_config_generator.enumerate_oxidation_assignments",
+        "apex_filter.elec_spin_config_generator._enumerate_oxidation_assignments",
         fake_enum_ox,
     )
     monkeypatch.setattr(
-        "apex_filter.elec_spin_config_generator.enumerate_spin_isomers",
+        "apex_filter.elec_spin_config_generator._enumerate_spin_isomers",
         fake_enum_isomers,
     )
     monkeypatch.setattr(
@@ -458,7 +456,7 @@ def test_enumeration_layer_summary_uses_uniform_vocabulary_for_benchmarks():
         configs = generate_all_configs(cluster, target_Sz=settings.get("spin"))
         raw_configs = copy.deepcopy(configs)
         configs, spin_isomers, families = canonicalize_config_spin_labels(configs, cluster)
-        summary = summarize_enumeration_layers(raw_configs, configs, spin_isomers, families)
+        summary = _summarize_enumeration_layers(raw_configs, configs, spin_isomers, families)
         for key, value in expected.items():
             assert summary[key] == value
         if xyz.name == "fe4s4.xyz":

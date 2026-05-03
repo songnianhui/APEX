@@ -12,16 +12,16 @@ Methods:
 """
 
 import numpy as np
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit as _curve_fit
 
-from .models import ExtrapolatedEnergy
+from shared.models import ExtrapolatedEnergy as _ExtrapolatedEnergy
 
 
 # ──────────────────────────────────────────────────────────────────
 # Method 1: DMRG bond dimension extrapolation
 # ──────────────────────────────────────────────────────────────────
 
-def dmrg_d_extrapolation(bond_dims: list, energies: list) -> ExtrapolatedEnergy:
+def dmrg_d_extrapolation(bond_dims: list, energies: list) -> _ExtrapolatedEnergy:
     """Extrapolate DMRG energies to infinite bond dimension.
 
     Fit model: E(D) = E_inf + A * exp(-kappa * (ln D)^2)
@@ -37,7 +37,7 @@ def dmrg_d_extrapolation(bond_dims: list, energies: list) -> ExtrapolatedEnergy:
     E = np.array(energies, dtype=float)
 
     if len(D) < 2:
-        return ExtrapolatedEnergy(
+        return _ExtrapolatedEnergy(
             method="DMRG_D_extrapolation",
             energy=E[0] if len(E) > 0 else 0.0,
             uncertainty=float("inf"),
@@ -53,7 +53,7 @@ def dmrg_d_extrapolation(bond_dims: list, energies: list) -> ExtrapolatedEnergy:
     kappa_guess = 0.1
 
     try:
-        popt, pcov = curve_fit(
+        popt, pcov = _curve_fit(
             model, D, E,
             p0=[e_inf_guess, A_guess, kappa_guess],
             maxfev=10000,
@@ -62,7 +62,7 @@ def dmrg_d_extrapolation(bond_dims: list, energies: list) -> ExtrapolatedEnergy:
         perr = np.sqrt(np.diag(pcov))
         uncertainty = perr[0] if len(perr) > 0 else 0.0
 
-        return ExtrapolatedEnergy(
+        return _ExtrapolatedEnergy(
             method="DMRG_D_extrapolation",
             energy=e_inf,
             uncertainty=uncertainty,
@@ -93,7 +93,7 @@ def _fallback_dmrg_extrapolation(D, E, error_msg):
     else:
         e_inf = E[-1]
 
-    return ExtrapolatedEnergy(
+    return _ExtrapolatedEnergy(
         method="DMRG_D_extrapolation_linear_fallback",
         energy=e_inf,
         uncertainty=abs(E[-1] - E[-2]) if len(E) >= 2 else float("inf"),
@@ -108,7 +108,7 @@ def _fallback_dmrg_extrapolation(D, E, error_msg):
 
 def cc_composite_energy(e_ccsdt_full: float,
                          e_ccsdtq_fno: float,
-                         e_ccsdt_fno: float) -> ExtrapolatedEnergy:
+                         e_ccsdt_fno: float) -> _ExtrapolatedEnergy:
     """Combine full-space CCSDT with FNO-CCSDTQ correction.
 
     E = E_CCSDT(full) + [E_CCSDTQ(FNO) - E_CCSDT(FNO)]
@@ -128,7 +128,7 @@ def cc_composite_energy(e_ccsdt_full: float,
     delta_q = e_ccsdtq_fno - e_ccsdt_fno
     e_composite = e_ccsdt_full + delta_q
 
-    return ExtrapolatedEnergy(
+    return _ExtrapolatedEnergy(
         method="CC_composite",
         energy=e_composite,
         uncertainty=abs(delta_q) * 0.1,  # rough 10% error estimate
@@ -148,7 +148,7 @@ def cc_composite_energy(e_ccsdt_full: float,
 
 def fno_extrapolation(thresholds: list,
                        corr_energies: list,
-                       degree: int = 2) -> ExtrapolatedEnergy:
+                       degree: int = 2) -> _ExtrapolatedEnergy:
     """Extrapolate correlation energy to zero FNO threshold.
 
     As the FNO occupation threshold → 0, more virtual orbitals are
@@ -166,7 +166,7 @@ def fno_extrapolation(thresholds: list,
     E_corr = np.array(corr_energies, dtype=float)
 
     if len(t) < degree + 1:
-        return ExtrapolatedEnergy(
+        return _ExtrapolatedEnergy(
             method="FNO_extrapolation",
             energy=E_corr[-1] if len(E_corr) > 0 else 0.0,
             uncertainty=float("inf"),
@@ -183,7 +183,7 @@ def fno_extrapolation(thresholds: list,
         residuals = E_corr - E_fit
         rmse = np.sqrt(np.mean(residuals ** 2))
 
-        return ExtrapolatedEnergy(
+        return _ExtrapolatedEnergy(
             method="FNO_extrapolation",
             energy=e_extrap,
             uncertainty=rmse,
@@ -196,7 +196,7 @@ def fno_extrapolation(thresholds: list,
             description=f"FNO extrapolation (degree {degree}): E_corr(0) = {e_extrap:.10f} ± {rmse:.2e}",
         )
     except Exception as e:
-        return ExtrapolatedEnergy(
+        return _ExtrapolatedEnergy(
             method="FNO_extrapolation",
             energy=E_corr[-1],
             uncertainty=abs(E_corr[-1] - E_corr[-2]) if len(E_corr) >= 2 else float("inf"),
@@ -212,7 +212,7 @@ def fno_extrapolation(thresholds: list,
 def correlation_increment_ratio(e_target_low: float,
                                  e_ref_low: float,
                                  e_ref_high: float,
-                                 e_ref_exact: float = None) -> ExtrapolatedEnergy:
+                                 e_ref_exact: float = None) -> _ExtrapolatedEnergy:
     """Transfer correlation ratios from a reference compound.
 
     E_target(high) ≈ E_target(low) × [E_ref(high) / E_ref(low)]
@@ -244,7 +244,7 @@ def correlation_increment_ratio(e_target_low: float,
     else:
         uncertainty = abs(e_target_high - e_target_low) * 0.1
 
-    return ExtrapolatedEnergy(
+    return _ExtrapolatedEnergy(
         method="correlation_increment_ratio",
         energy=e_target_high,
         uncertainty=uncertainty,
@@ -264,7 +264,7 @@ def correlation_increment_ratio(e_target_low: float,
 
 def mp2_space_correction(e_small_cas: float,
                           e_mp2_small: float,
-                          e_mp2_large: float) -> ExtrapolatedEnergy:
+                          e_mp2_large: float) -> _ExtrapolatedEnergy:
     """Estimate large-CAS energy from small-CAS + MP2 correction.
 
     E(large CAS) ≈ E(small CAS) + [E_MP2(large) - E_MP2(small)]
@@ -284,7 +284,7 @@ def mp2_space_correction(e_small_cas: float,
     delta_mp2 = e_mp2_large - e_mp2_small
     e_corrected = e_small_cas + delta_mp2
 
-    return ExtrapolatedEnergy(
+    return _ExtrapolatedEnergy(
         method="MP2_space_correction",
         energy=e_corrected,
         uncertainty=abs(delta_mp2) * 0.2,  # 20% of correction as error estimate

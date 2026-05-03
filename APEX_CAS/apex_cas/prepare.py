@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import csv
 import os
-from collections import Counter
-from dataclasses import dataclass
-from typing import Iterable
+from collections import Counter as _Counter
+from dataclasses import dataclass as _dataclass
+from typing import Iterable as _Iterable
 
 import matplotlib
 
@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from shared.structure_parser import _build_connectivity, parse_structure
+from shared.structure_parser import _build_connectivity, parse_structure as _parse_structure
 
 
 ROLE_PRIORITY = {
@@ -55,8 +55,8 @@ VALID_ROLES = {"metal", "bridging", "terminal", "interstitial", "spectator"}
 VALID_PROJECTION_ROLES = {"metal_df", "bridging_p", "exclude"}
 
 
-@dataclass
-class PreparedAtom:
+@_dataclass
+class _PreparedAtom:
     atom_index: int
     xyz_serial: int
     element: str
@@ -73,7 +73,7 @@ class PreparedAtom:
     note: str = ""
 
 
-def prepare_cluster_inputs(
+def _prepare_cluster_inputs(
     structure_path: str,
     *,
     case_dir: str,
@@ -88,7 +88,7 @@ def prepare_cluster_inputs(
     force: bool = False,
 ) -> dict:
     """Generate draft cluster-info artifacts for a structure."""
-    cluster_info = parse_structure(
+    cluster_info = _parse_structure(
         structure_path,
         charge=charge,
         target_spin=target_spin,
@@ -108,7 +108,6 @@ def prepare_cluster_inputs(
     stem = os.path.splitext(os.path.basename(structure_path))[0]
 
     draft_csv = os.path.join(inputs_dir, f"{stem}_cluster_info_draft.csv")
-    legacy_draft_yaml = os.path.join(inputs_dir, f"{stem}_cluster_info_draft.yaml")
     final_yaml = os.path.join(inputs_dir, f"{stem}_cluster_info.yaml")
     labeled_png = os.path.join(inputs_dir, f"{stem}_structure_labeled.png")
 
@@ -119,9 +118,6 @@ def prepare_cluster_inputs(
         np.asarray(cluster_info.all_positions, dtype=float),
         prepared_atoms,
     )
-    if os.path.exists(legacy_draft_yaml):
-        os.remove(legacy_draft_yaml)
-
     return {
         "cluster_info": cluster_info,
         "prepared_atoms": prepared_atoms,
@@ -132,7 +128,7 @@ def prepare_cluster_inputs(
     }
 
 
-def finalize_cluster_info_draft(
+def _finalize_cluster_info_draft(
     structure_path: str,
     *,
     case_dir: str,
@@ -148,7 +144,7 @@ def finalize_cluster_info_draft(
     force: bool = False,
 ) -> dict:
     """Validate an edited draft CSV and write the authoritative cluster_info.yaml."""
-    cluster_info = parse_structure(
+    cluster_info = _parse_structure(
         structure_path,
         charge=charge,
         target_spin=target_spin,
@@ -188,7 +184,7 @@ def finalize_cluster_info_draft(
     }
 
 
-def _build_prepared_atoms(cluster_info) -> list[PreparedAtom]:
+def _build_prepared_atoms(cluster_info) -> list[_PreparedAtom]:
     elements = list(cluster_info.all_elements)
     positions = np.asarray(cluster_info.all_positions, dtype=float)
     connectivity = _build_connectivity(elements, positions)
@@ -259,7 +255,7 @@ def _build_prepared_atoms(cluster_info) -> list[PreparedAtom]:
         )
 
         prepared.append(
-            PreparedAtom(
+            _PreparedAtom(
                 atom_index=idx,
                 xyz_serial=idx + 1,
                 element=elem,
@@ -355,7 +351,7 @@ def _infer_charge_and_ligand_type(
     return 0, ""
 
 
-def _write_cluster_info_draft_csv(path: str, atoms: list[PreparedAtom]) -> None:
+def _write_cluster_info_draft_csv(path: str, atoms: list[_PreparedAtom]) -> None:
     atoms = _sorted_prepared_atoms(atoms)
     with open(path, "w", newline="", encoding="utf-8") as fh:
         fh.write("# APEX prepare cluster-info draft. Edit the formal fields, review the read-only fields.\n")
@@ -406,7 +402,7 @@ def _write_cluster_info_draft_csv(path: str, atoms: list[PreparedAtom]) -> None:
             )
 
 
-def _write_cluster_info_yaml(path: str, cluster_info, atoms: list[PreparedAtom]) -> None:
+def _write_cluster_info_yaml(path: str, cluster_info, atoms: list[_PreparedAtom]) -> None:
     atoms = _sorted_prepared_atoms(atoms)
     payload = {
         "cluster": {
@@ -445,7 +441,7 @@ def _load_validated_prepared_atoms_from_csv(
     path: str,
     *,
     elements: list[str],
-) -> list[PreparedAtom]:
+) -> list[_PreparedAtom]:
     rows = _read_cluster_info_draft_rows(path)
     if not rows:
         raise ValueError(f"No atom rows found in draft CSV: {path}")
@@ -468,7 +464,7 @@ def _load_validated_prepared_atoms_from_csv(
             f"Draft CSV missing required columns: {', '.join(sorted(missing))}"
         )
 
-    prepared: list[PreparedAtom] = []
+    prepared: list[_PreparedAtom] = []
     seen_indices: set[int] = set()
     seen_labels: set[str] = set()
 
@@ -517,7 +513,7 @@ def _load_validated_prepared_atoms_from_csv(
             )
 
         prepared.append(
-            PreparedAtom(
+            _PreparedAtom(
                 atom_index=atom_index,
                 xyz_serial=xyz_serial,
                 element=element,
@@ -605,13 +601,12 @@ def _write_labeled_structure_png(
     path: str,
     elements: list[str],
     positions: np.ndarray,
-    atoms: list[PreparedAtom],
+    atoms: list[_PreparedAtom],
 ) -> None:
     coords_2d = _project_to_2d(positions)
     connectivity = _build_connectivity(elements, positions)
     fig, ax = plt.subplots(figsize=(9, 7), dpi=180)
 
-    by_index = {atom.atom_index: atom for atom in atoms}
     for i, neighbors in connectivity.items():
         for j in neighbors:
             if j <= i:
@@ -667,8 +662,8 @@ def _project_to_2d(positions: np.ndarray) -> np.ndarray:
     return projected
 
 
-def _sorted_prepared_atoms(atoms: list[PreparedAtom]) -> list[PreparedAtom]:
-    def label_num(atom: PreparedAtom) -> int:
+def _sorted_prepared_atoms(atoms: list[_PreparedAtom]) -> list[_PreparedAtom]:
+    def label_num(atom: _PreparedAtom) -> int:
         suffix = atom.user_label[len(atom.element):]
         try:
             return int(suffix)
@@ -754,8 +749,8 @@ def _sort_display_neighbors(
     )
 
 
-def _format_neighbor_elements(elements: Iterable[str]) -> str:
-    counts = Counter(elements)
+def _format_neighbor_elements(elements: _Iterable[str]) -> str:
+    counts = _Counter(elements)
     parts = []
     for elem in sorted(counts):
         count = counts[elem]

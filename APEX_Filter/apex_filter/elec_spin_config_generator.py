@@ -2,44 +2,46 @@
 configuration generation for transition metal clusters.
 
 This module combines:
-- Spin isomer enumeration (collinear broken-symmetry spin patterns)
-- Symmetry reduction of spin isomers
-- Oxidation state assignment for metal centers
-- D-orbital occupancy enumeration
-- Electronic configuration generation (spin × oxidation × d-orbital)
-- Symmetry reduction of electronic configurations
+- internal spin-isomer enumeration primitives
+- internal symmetry reduction of spin isomers
+- internal oxidation-state assignment and d-orbital occupancy primitives
+- public high-level electronic configuration generation
+- public canonical relabeling of saved Step 2 configuration families
 
 Reference: Zhai et al. 2026 — FeMo-co yields 35 collinear spin isomers
 with target Sz=3/2, reduced to 10 BS families under C3 symmetry,
 generating 78,750 total UHF initial guesses.
 """
 
+import logging
+from itertools import combinations as _combinations, permutations as _permutations, product as _product
+
 import numpy as np
-from itertools import combinations, permutations, product
+import yaml
 
-from shared.cluster_info_labels import resolve_metal_site_label
-from .models import (
-    ClusterInfo,
-    ElectronicConfig,
-    OxidationAssignment,
-    SpinIsomer,
-    SpinIsomerFamily,
+from shared.cluster_info_labels import resolve_metal_site_label as _resolve_metal_site_label
+from shared.knowledge_base import data_file as _knowledge_base_file
+from shared.models import (
+    ClusterInfo as _ClusterInfo,
+    ElectronicConfig as _ElectronicConfig,
+    OxidationAssignment as _OxidationAssignment,
+    SpinIsomer as _SpinIsomer,
+    SpinIsomerFamily as _SpinIsomerFamily,
 )
+from shared.roman import to_roman as _to_roman
 from shared.chem_knowledge import (
-    get_common_oxidation_states,
-    get_d_electron_count,
-    get_local_spin,
-    match_cluster_template,
+    get_common_oxidation_states as _get_common_oxidation_states,
+    get_d_electron_count as _get_d_electron_count,
+    get_local_spin as _get_local_spin,
+    match_cluster_template as _match_cluster_template,
 )
-
-
 # ══════════════════════════════════════════════════════════════════
 # Spin Isomer Enumeration
 # ══════════════════════════════════════════════════════════════════
 
-def enumerate_spin_isomers(cluster_info: ClusterInfo,
-                           target_Sz: float = None,
-                           oxidation_states: dict = None) -> list[SpinIsomer]:
+def _enumerate_spin_isomers(cluster_info: _ClusterInfo,
+                            target_Sz: float = None,
+                            oxidation_states: dict = None) -> list[_SpinIsomer]:
     """Enumerate all collinear broken-symmetry spin isomers.
 
     Each metal site has a local spin Si that can point up (+1) or down (-1).
@@ -68,7 +70,7 @@ def enumerate_spin_isomers(cluster_info: ClusterInfo,
     n_metals = len(metals)
     isomers = []
 
-    for signs in product([+1, -1], repeat=n_metals):
+    for signs in _product([+1, -1], repeat=n_metals):
         # Compute total Sz for this assignment
         total_Sz = sum(s * si for s, si in zip(signs, local_spins))
 
@@ -84,7 +86,7 @@ def enumerate_spin_isomers(cluster_info: ClusterInfo,
             site_label = "".join(str(s + 1) for s in minority_sites) if minority_sites else "0"
             full_label = f"{family_label}-{site_label}"
 
-            isomers.append(SpinIsomer(
+            isomers.append(_SpinIsomer(
                 label=full_label,
                 spin_assignment=spin_assignment,
                 n_minority=n_minority,
@@ -99,9 +101,9 @@ def enumerate_spin_isomers(cluster_info: ClusterInfo,
 # Symmetry Reduction
 # ══════════════════════════════════════════════════════════════════
 
-def apply_symmetry_reduction(isomers: list[SpinIsomer],
-                              symmetry_group: str = "C1",
-                              metal_positions: np.ndarray = None) -> list[SpinIsomerFamily]:
+def _apply_symmetry_reduction(isomers: list[_SpinIsomer],
+                               symmetry_group: str = "C1",
+                               metal_positions: np.ndarray = None) -> list[_SpinIsomerFamily]:
     """Group equivalent spin isomers under point group symmetry.
 
     Args:
@@ -116,7 +118,7 @@ def apply_symmetry_reduction(isomers: list[SpinIsomer],
         # No symmetry reduction — each isomer is its own family
         families = []
         for iso in isomers:
-            fam = SpinIsomerFamily(
+            fam = _SpinIsomerFamily(
                 label=iso.family,
                 n_minority=iso.n_minority,
                 isomers=[iso],
@@ -141,7 +143,7 @@ def apply_symmetry_reduction(isomers: list[SpinIsomer],
     return _group_by_symmetry(isomers, equiv_maps, fold)
 
 
-def label_isomers(families: list[SpinIsomerFamily]) -> list[SpinIsomerFamily]:
+def _label_isomers(families: list[_SpinIsomerFamily]) -> list[_SpinIsomerFamily]:
     """Label isomer families as BSn and individual isomers as BSn-ijk.
 
     Convention: ijk are 1-indexed positions of minority-spin metals,
@@ -178,63 +180,13 @@ def label_isomers(families: list[SpinIsomerFamily]) -> list[SpinIsomerFamily]:
     return families
 
 
-def rank_by_heisenberg(isomers: list[SpinIsomer],
-                       J_couplings: np.ndarray = None,
-                       connectivity: list = None,
-                       cluster_info: ClusterInfo = None,
-                       oxidation_states: dict = None) -> list[SpinIsomer]:
-    """Rank spin isomers by estimated Heisenberg exchange energy.
-
-    E = -sum_{ij} J_ij * Si · Sj = -sum_{ij} J_ij * (sign_i * Si) * (sign_j * Sj)
-
-    Lower (more negative) energy = more favorable.
-
-    Args:
-        isomers: List of SpinIsomer objects.
-        J_couplings: (n_metals, n_metals) matrix of exchange couplings.
-            If None, uses a simple AFM superexchange model.
-        connectivity: List of (i, j) pairs indicating which metals are connected.
-        cluster_info: ClusterInfo for looking up metal elements and oxidation states.
-        oxidation_states: Optional dict {metal_idx: oxidation_state}.
-
-    Returns:
-        Isomers sorted by energy (lowest first).
-    """
-    if not isomers:
-        return []
-
-    n_metals = max(max(iso.spin_assignment.keys()) for iso in isomers) + 1
-
-    if J_couplings is None:
-        J_couplings = _default_J_model(n_metals, connectivity)
-
-    # Build spin magnitude lookup from knowledge base
-    spin_magnitudes = _load_spin_magnitudes(
-        n_metals, cluster_info, oxidation_states
-    )
-
-    ranked = []
-    for iso in isomers:
-        E = 0.0
-        for i in range(n_metals):
-            for j in range(i + 1, n_metals):
-                if abs(J_couplings[i, j]) > 1e-10:
-                    Si = spin_magnitudes.get(i, 2.0)
-                    Sj = spin_magnitudes.get(j, 2.0)
-                    E -= J_couplings[i, j] * iso.spin_assignment[i] * iso.spin_assignment[j] * Si * Sj
-        ranked.append((E, iso))
-
-    ranked.sort(key=lambda x: x[0])
-    return [iso for _, iso in ranked]
-
-
 # ══════════════════════════════════════════════════════════════════
 # Oxidation State Enumeration
 # ══════════════════════════════════════════════════════════════════
 
-def enumerate_oxidation_assignments(cluster_info: ClusterInfo,
-                                     spin_isomer: SpinIsomer = None,
-                                     allowed_oxidations: dict = None) -> list[OxidationAssignment]:
+def _enumerate_oxidation_assignments(cluster_info: _ClusterInfo,
+                                      spin_isomer: _SpinIsomer = None,
+                                      allowed_oxidations: dict = None) -> list[_OxidationAssignment]:
     """Enumerate valid oxidation state assignments for the metal centers.
 
     Constraints:
@@ -268,17 +220,17 @@ def enumerate_oxidation_assignments(cluster_info: ClusterInfo,
         if allowed_oxidations and metal.element in allowed_oxidations:
             opts = allowed_oxidations[metal.element]
         else:
-            opts = get_common_oxidation_states(metal.element)
+            opts = _get_common_oxidation_states(metal.element)
         if not opts:
             opts = [2, 3]
         options.append(opts)
 
     # Enumerate all combinations and sort by distance to target_sum
     candidates = []
-    for combo in product(*options):
+    for combo in _product(*options):
         distance = abs(sum(combo) - target_sum)
         desc = _describe_oxidation_assignment(combo, metals)
-        candidates.append((distance, OxidationAssignment(
+        candidates.append((distance, _OxidationAssignment(
             assignments={k: combo[k] for k in range(n_metals)},
             description=desc,
         )))
@@ -299,7 +251,6 @@ def enumerate_oxidation_assignments(cluster_info: ClusterInfo,
     closest = [oa for d, oa in candidates if abs(d - min_dist) < 1e-6]
 
     if min_dist > 2:
-        import logging
         logging.getLogger(__name__).warning(
             "No exact oxidation state match found. "
             "Closest match has distance %.1f from target charge balance. "
@@ -314,10 +265,10 @@ def enumerate_oxidation_assignments(cluster_info: ClusterInfo,
 # D-Orbital Configuration
 # ══════════════════════════════════════════════════════════════════
 
-def enumerate_d_orbital_configs(metal_element: str,
-                                 oxidation_state: int,
-                                 spin_direction: int,
-                                 n_d_orbitals: int = 5) -> list[int]:
+def _enumerate_d_orbital_configs(metal_element: str,
+                                  oxidation_state: int,
+                                  spin_direction: int,
+                                  n_d_orbitals: int = 5) -> list[int]:
     """Enumerate which d-orbital hosts the extra electron for partially-filled shells.
 
     For a high-spin d6 configuration (Fe(II)), 5 orbitals are singly occupied
@@ -333,10 +284,7 @@ def enumerate_d_orbital_configs(metal_element: str,
         List of d-orbital indices (0-based) where extra electron can go.
         Empty list if no choice (fully determined by high-spin filling).
     """
-    d_count = get_d_electron_count(metal_element, oxidation_state)
-    S = get_local_spin(metal_element, oxidation_state)
-    n_unpaired = int(2 * S)
-
+    d_count = _get_d_electron_count(metal_element, oxidation_state)
     if d_count == 0 or d_count == 10:
         # Empty or full shell — no choice
         return []
@@ -364,10 +312,10 @@ def enumerate_d_orbital_configs(metal_element: str,
 # Electronic Configuration Generation
 # ══════════════════════════════════════════════════════════════════
 
-def generate_all_configs(cluster_info: ClusterInfo,
+def generate_all_configs(cluster_info: _ClusterInfo,
                          target_Sz: float = None,
                          max_configs: int = None,
-                         forced_oxidation: dict = None) -> list[ElectronicConfig]:
+                         forced_oxidation: dict = None) -> list[_ElectronicConfig]:
     """Generate physically consistent electronic configurations.
 
     Enumerates oxidation assignments **first**, then for each assignment
@@ -379,7 +327,7 @@ def generate_all_configs(cluster_info: ClusterInfo,
     Flow::
 
         for oxidation_assignment:
-            per_metal_S = {i: get_local_spin(elem, ox_i)}
+            per_metal_S = {i: _get_local_spin(elem, ox_i)}
             spin_isomers = enumerate_spin_isomers(..., oxidation_states=ox)
             for spin_isomer:
                 for d_orbital_combo:
@@ -408,7 +356,7 @@ def generate_all_configs(cluster_info: ClusterInfo,
 
     # Step 1: enumerate oxidation assignments
     if forced_oxidation:
-        ox_assignments = [OxidationAssignment(
+        ox_assignments = [_OxidationAssignment(
             assignments=forced_oxidation,
             description=_describe_oxidation_assignment(
                 [forced_oxidation.get(k, 2) for k in range(len(cluster_info.metals))],
@@ -416,11 +364,11 @@ def generate_all_configs(cluster_info: ClusterInfo,
             ),
         )]
     else:
-        ox_assignments = enumerate_oxidation_assignments(cluster_info)
+        ox_assignments = _enumerate_oxidation_assignments(cluster_info)
 
     for ox in ox_assignments:
         # Step 2: enumerate spin isomers with *correct* per-metal local spins
-        isomers = enumerate_spin_isomers(
+        isomers = _enumerate_spin_isomers(
             cluster_info,
             target_Sz=target_Sz,
             oxidation_states=ox.assignments,
@@ -432,7 +380,7 @@ def generate_all_configs(cluster_info: ClusterInfo,
                 cluster_info, iso, ox,
             )
             if not d_choices:
-                cfg = ElectronicConfig(
+                cfg = _ElectronicConfig(
                     spin_isomer=iso,
                     oxidation=ox,
                     d_orbital_assignments={},
@@ -449,10 +397,10 @@ def generate_all_configs(cluster_info: ClusterInfo,
                 metal_indices = sorted(d_choices.keys())
                 choice_lists = [d_choices[m] for m in metal_indices]
 
-                for combo in product(*choice_lists):
+                for combo in _product(*choice_lists):
                     d_assign = {metal_indices[k]: combo[k]
                                 for k in range(len(metal_indices))}
-                    cfg = ElectronicConfig(
+                    cfg = _ElectronicConfig(
                         spin_isomer=iso,
                         oxidation=ox,
                         d_orbital_assignments=d_assign,
@@ -473,9 +421,9 @@ def generate_all_configs(cluster_info: ClusterInfo,
 
 
 def canonicalize_config_spin_labels(
-    configs: list[ElectronicConfig],
-    cluster_info: ClusterInfo,
-) -> tuple[list[ElectronicConfig], list[SpinIsomer], list[SpinIsomerFamily]]:
+    configs: list[_ElectronicConfig],
+    cluster_info: _ClusterInfo,
+) -> tuple[list[_ElectronicConfig], list[_SpinIsomer], list[_SpinIsomerFamily]]:
     """Relabel config spin isomers using one symmetry-reduced canonical map.
 
     This keeps the config list, the saved unique spin isomer list, and the
@@ -503,7 +451,7 @@ def canonicalize_config_spin_labels(
         key = _spin_isomer_key(cfg.spin_isomer)
         if key not in by_key:
             iso = cfg.spin_isomer
-            by_key[key] = SpinIsomer(
+            by_key[key] = _SpinIsomer(
                 label=iso.label,
                 spin_assignment=dict(iso.spin_assignment),
                 n_minority=iso.n_minority,
@@ -518,8 +466,8 @@ def canonicalize_config_spin_labels(
 
     metal_positions = np.array([m.position for m in cluster_info.metals]) if cluster_info.metals else None
     reduction_symmetry = getattr(cluster_info, "reduction_symmetry", None) or cluster_info.symmetry_group
-    families = apply_symmetry_reduction(unique_isomers, reduction_symmetry, metal_positions)
-    families = label_isomers(families)
+    families = _apply_symmetry_reduction(unique_isomers, reduction_symmetry, metal_positions)
+    families = _label_isomers(families)
 
     labeled_by_key = {}
     for fam in families:
@@ -533,7 +481,7 @@ def canonicalize_config_spin_labels(
             continue
 
         labeled_iso = labeled_by_key[_spin_isomer_key(cfg.spin_isomer)]
-        cfg.spin_isomer = SpinIsomer(
+        cfg.spin_isomer = _SpinIsomer(
             label=labeled_iso.label,
             spin_assignment=dict(labeled_iso.spin_assignment),
             n_minority=labeled_iso.n_minority,
@@ -556,8 +504,8 @@ def canonicalize_config_spin_labels(
 # Symmetry Reduction for Electronic Configurations
 # ══════════════════════════════════════════════════════════════════
 
-def reduce_configs_by_symmetry(configs: list[ElectronicConfig],
-                                cluster_info: ClusterInfo) -> list[ElectronicConfig]:
+def _reduce_configs_by_symmetry(configs: list[_ElectronicConfig],
+                                cluster_info: _ClusterInfo) -> list[_ElectronicConfig]:
     """Remove symmetry-equivalent electronic configurations.
 
     Detects equivalent metal sites (same element, similar geometry and
@@ -601,11 +549,11 @@ def reduce_configs_by_symmetry(configs: list[ElectronicConfig],
     return unique_configs
 
 
-def summarize_enumeration_layers(
-    configs_before_reduction: list[ElectronicConfig],
-    configs_after_reduction: list[ElectronicConfig] | None = None,
-    spin_isomers: list[SpinIsomer] | None = None,
-    families: list[SpinIsomerFamily] | None = None,
+def _summarize_enumeration_layers(
+    configs_before_reduction: list[_ElectronicConfig],
+    configs_after_reduction: list[_ElectronicConfig] | None = None,
+    spin_isomers: list[_SpinIsomer] | None = None,
+    families: list[_SpinIsomerFamily] | None = None,
 ) -> dict:
     """Summarize enumeration using a fixed, cross-system counting vocabulary.
 
@@ -616,18 +564,18 @@ def summarize_enumeration_layers(
     before = configs_before_reduction or []
     after = configs_after_reduction if configs_after_reduction is not None else before
 
-    def _spin_label(cfg: ElectronicConfig) -> str:
+    def _spin_label(cfg: _ElectronicConfig) -> str:
         return cfg.spin_isomer.label if cfg.spin_isomer else ""
 
-    def _family_label(cfg: ElectronicConfig) -> str:
+    def _family_label(cfg: _ElectronicConfig) -> str:
         return cfg.spin_isomer.family if cfg.spin_isomer else ""
 
-    def _ox_key(cfg: ElectronicConfig):
+    def _ox_key(cfg: _ElectronicConfig):
         if cfg.oxidation is None:
             return ()
         return tuple(sorted(cfg.oxidation.assignments.items()))
 
-    def _d_key(cfg: ElectronicConfig):
+    def _d_key(cfg: _ElectronicConfig):
         return tuple(sorted(cfg.d_orbital_assignments.items()))
 
     raw_spin_patterns = len({_spin_label(cfg) for cfg in before if _spin_label(cfg)})
@@ -659,53 +607,6 @@ def summarize_enumeration_layers(
 
 
 # ══════════════════════════════════════════════════════════════════
-# Computational Cost Estimation
-# ══════════════════════════════════════════════════════════════════
-
-def estimate_computational_cost(n_configs: int,
-                                 active_space_n_electrons: int,
-                                 active_space_n_orbitals: int,
-                                 method: str = "UHF") -> dict:
-    """Estimate wall time / computational cost for a batch of calculations.
-
-    Returns a dict with rough estimates (orders of magnitude only).
-    These are not exact — they provide guidance for planning.
-
-    Args:
-        n_configs: Number of configurations.
-        active_space_n_electrons: Number of active electrons.
-        active_space_n_orbitals: Number of active orbitals.
-        method: "UHF", "UCCSD", "UCCSDT", "DMRG".
-
-    Returns:
-        Dict with cost estimates.
-    """
-    n = active_space_n_orbitals
-    e = active_space_n_electrons
-
-    # Rough scaling estimates (relative units)
-    cost_per_config = {
-        "UHF": n ** 3,
-        "UCCSD": n ** 6,
-        "UCCSDT": n ** 8,
-        "DMRG": n ** 3 * 5000,  # D * n^3 with D~5000
-        "CCSDTQ": n ** 10,
-    }
-
-    per_config = cost_per_config.get(method, n ** 4)
-    total = per_config * n_configs
-
-    return {
-        "n_configs": n_configs,
-        "method": method,
-        "cost_per_config_relative": per_config,
-        "total_cost_relative": total,
-        "active_space": f"({e}e, {n}o)",
-        "recommendation": _cost_recommendation(n_configs, total, method),
-    }
-
-
-# ══════════════════════════════════════════════════════════════════
 # Internal Helpers — Spin Isomers
 # ══════════════════════════════════════════════════════════════════
 
@@ -717,14 +618,14 @@ def _get_local_spins(metals, oxidation_states=None, cluster_info=None):
             ox = oxidation_states[k]
         else:
             ox = _infer_oxidation_state(metal.element, k, metals, cluster_info)
-        S = get_local_spin(metal.element, ox)
+        S = _get_local_spin(metal.element, ox)
         spins.append(S)
     return spins
 
 
 def _infer_oxidation_state(element, metal_idx, metals, cluster_info=None):
     """Infer the most likely oxidation state for a metal center."""
-    states = get_common_oxidation_states(element)
+    states = _get_common_oxidation_states(element)
     if not states:
         return 2
 
@@ -833,7 +734,7 @@ def _group_by_symmetry(isomers, equiv_maps, fold):
                 visited.add(j)
 
         n_minority = iso.n_minority
-        fam = SpinIsomerFamily(
+        fam = _SpinIsomerFamily(
             label=f"BS{n_minority}",
             n_minority=n_minority,
             isomers=group,
@@ -868,7 +769,7 @@ def _group_by_minority_set(isomers):
     families = []
     for key, group in groups.items():
         n_minority = len(key)
-        fam = SpinIsomerFamily(
+        fam = _SpinIsomerFamily(
             label=f"BS{n_minority}",
             n_minority=n_minority,
             isomers=group,
@@ -879,45 +780,7 @@ def _group_by_minority_set(isomers):
     return families
 
 
-def _default_J_model(n_metals, connectivity=None):
-    """Default antiferromagnetic J coupling model."""
-    J = np.zeros((n_metals, n_metals))
-    J_val = -1.0  # AFM coupling
-
-    if connectivity:
-        for i, j in connectivity:
-            J[i, j] = J_val
-            J[j, i] = J_val
-    else:
-        for i in range(n_metals):
-            for j in range(i + 1, n_metals):
-                J[i, j] = J_val
-                J[j, i] = J_val
-
-    return J
-
-
-def _load_spin_magnitudes(n_metals, cluster_info=None, oxidation_states=None):
-    """Load spin magnitudes Si for each metal from the knowledge base."""
-    magnitudes = {}
-    if cluster_info is None:
-        return magnitudes
-
-    for k, metal in enumerate(cluster_info.metals):
-        if k >= n_metals:
-            break
-        if oxidation_states and k in oxidation_states:
-            ox = oxidation_states[k]
-        else:
-            states = get_common_oxidation_states(metal.element)
-            ox = states[0] if states else 2
-        S = get_local_spin(metal.element, ox)
-        magnitudes[k] = S
-
-    return magnitudes
-
-
-def _spin_isomer_key(isomer: SpinIsomer) -> tuple:
+def _spin_isomer_key(isomer: _SpinIsomer) -> tuple:
     """Canonical key for deduplicating and relabeling spin isomers."""
     return tuple(sorted((int(site_idx), int(sign)) for site_idx, sign in isomer.spin_assignment.items()))
 
@@ -926,7 +789,7 @@ def _spin_isomer_key(isomer: SpinIsomer) -> tuple:
 # Internal Helpers — Electronic Configurations
 # ══════════════════════════════════════════════════════════════════
 
-def _estimate_ligand_charge(cluster_info: ClusterInfo) -> int:
+def _estimate_ligand_charge(cluster_info: _ClusterInfo) -> int:
     """Estimate total charge from ligands (bridging + terminal).
 
     When explicit ``cluster_info.yaml`` annotations are present, respect the
@@ -940,7 +803,7 @@ def _estimate_ligand_charge(cluster_info: ClusterInfo) -> int:
 
     # Try template-based estimate first
     try:
-        template = match_cluster_template(cluster_info)
+        template = _match_cluster_template(cluster_info)
     except (ImportError, Exception):
         template = None
 
@@ -962,12 +825,8 @@ def _estimate_ligand_charge(cluster_info: ClusterInfo) -> int:
             return cluster_info.total_charge - metal_ox_sum
 
     # Fallback: element-based estimate from ligand database
-    import os
-    import yaml
-
-    from ._paths import data_file as _kb_file
     try:
-        lig_path = _kb_file("ligand_database.yaml")
+        lig_path = _knowledge_base_file("ligand_database.yaml")
         with open(lig_path) as f:
             lig_db = yaml.safe_load(f)
     except (FileNotFoundError, IOError):
@@ -1002,21 +861,9 @@ def _describe_oxidation_assignment(combo, metals) -> str:
     )()
     parts = []
     for k, ox in enumerate(combo):
-        label = resolve_metal_site_label(pseudo_cluster, k)
+        label = _resolve_metal_site_label(pseudo_cluster, k)
         parts.append(f"{label}({_to_roman(ox)})")
     return "+".join(parts)
-
-
-def _to_roman(n: int) -> str:
-    """Convert integer to Roman numeral string."""
-    vals = [(10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")]
-    result = ""
-    for val, sym in vals:
-        while n >= val:
-            result += sym
-            n -= val
-    return result
-
 
 def _get_d_orbital_choices_for_cluster(cluster_info, spin_isomer, ox_assignment):
     """Get d-orbital choice indices for each metal that has a partially filled shell."""
@@ -1026,18 +873,18 @@ def _get_d_orbital_choices_for_cluster(cluster_info, spin_isomer, ox_assignment)
         if ox is None:
             continue
         spin_dir = spin_isomer.spin_assignment.get(k, +1)
-        d_choices = enumerate_d_orbital_configs(metal.element, ox, spin_dir)
+        d_choices = _enumerate_d_orbital_configs(metal.element, ox, spin_dir)
         if d_choices:
             choices[k] = d_choices
     return choices
 
 
-def _metal_site_label(cluster_info: ClusterInfo, site_idx: int) -> str:
+def _metal_site_label(cluster_info: _ClusterInfo, site_idx: int) -> str:
     """Return the user-facing label for a metal site."""
-    return resolve_metal_site_label(cluster_info, site_idx)
+    return _resolve_metal_site_label(cluster_info, site_idx)
 
 
-def _format_spin_pattern(cluster_info: ClusterInfo, spin_assignment: dict) -> str:
+def _format_spin_pattern(cluster_info: _ClusterInfo, spin_assignment: dict) -> str:
     """Render a user-facing spin pattern such as Fe1↓Fe2↑."""
     parts = []
     for site_idx in sorted(spin_assignment):
@@ -1047,7 +894,7 @@ def _format_spin_pattern(cluster_info: ClusterInfo, spin_assignment: dict) -> st
     return "".join(parts)
 
 
-def _format_d_assignments(cluster_info: ClusterInfo, d_assign: dict) -> str:
+def _format_d_assignments(cluster_info: _ClusterInfo, d_assign: dict) -> str:
     """Render user-facing d-assignment labels such as Fe1:d2."""
     if not d_assign:
         return "d:none"
@@ -1058,9 +905,9 @@ def _format_d_assignments(cluster_info: ClusterInfo, d_assign: dict) -> str:
 
 
 def _build_config_label(
-    cluster_info: ClusterInfo,
-    spin_isomer: SpinIsomer,
-    oxidation: OxidationAssignment,
+    cluster_info: _ClusterInfo,
+    spin_isomer: _SpinIsomer,
+    oxidation: _OxidationAssignment,
     d_assign: dict,
 ) -> str:
     """Build the user-facing electronic-config label."""
@@ -1096,13 +943,13 @@ _FE4S4_CUBANE_FAMILY_BY_MINORITY = {
 }
 
 
-def _generate_configs_chan_fe2s2(cluster_info: ClusterInfo, target_Sz=None) -> list[ElectronicConfig]:
+def _generate_configs_chan_fe2s2(cluster_info: _ClusterInfo, target_Sz=None) -> list[_ElectronicConfig]:
     """Reproduce the two initial singlet guesses used in Chan 2017 Fe2S2."""
     assignments = [
         {0: +1, 1: -1},
         {0: -1, 1: +1},
     ]
-    ox = OxidationAssignment(
+    ox = _OxidationAssignment(
         assignments={0: 3, 1: 3},
         description="2xFe(III)",
     )
@@ -1110,14 +957,14 @@ def _generate_configs_chan_fe2s2(cluster_info: ClusterInfo, target_Sz=None) -> l
     for idx, spin_assignment in enumerate(assignments):
         minority = sorted(k for k, v in spin_assignment.items() if v == -1)
         site_label = "".join(str(i + 1) for i in minority)
-        iso = SpinIsomer(
+        iso = _SpinIsomer(
             label=f"BS1-{site_label}",
             spin_assignment=spin_assignment,
             n_minority=1,
             family=f"BS1_{idx + 1}",
             Sz=0.0 if target_Sz is None else target_Sz,
         )
-        configs.append(ElectronicConfig(
+        configs.append(_ElectronicConfig(
             spin_isomer=iso,
             oxidation=ox,
             d_orbital_assignments={},
@@ -1129,7 +976,7 @@ def _generate_configs_chan_fe2s2(cluster_info: ClusterInfo, target_Sz=None) -> l
     return configs
 
 
-def _generate_configs_chan_fe4s4(cluster_info: ClusterInfo) -> list[ElectronicConfig]:
+def _generate_configs_chan_fe4s4(cluster_info: _ClusterInfo) -> list[_ElectronicConfig]:
     """Reproduce the 24 physically meaningful initial guesses from Chan 2017."""
     pair_family = {
         frozenset({0, 1}): "BS1",
@@ -1142,9 +989,8 @@ def _generate_configs_chan_fe4s4(cluster_info: ClusterInfo) -> list[ElectronicCo
     configs = []
     config_id = 0
 
-    for minority in combinations(range(4), 2):
+    for minority in _combinations(range(4), 2):
         minority_set = frozenset(minority)
-        complement = frozenset(range(4)) - minority_set
         family = pair_family[minority_set]
         spin_assignment = {i: (-1 if i in minority_set else +1) for i in range(4)}
         up_sites = [i for i in range(4) if spin_assignment[i] == +1]
@@ -1155,14 +1001,14 @@ def _generate_configs_chan_fe4s4(cluster_info: ClusterInfo) -> list[ElectronicCo
                 ox_map = {i: 3 for i in range(4)}
                 ox_map[feii_up] = 2
                 ox_map[feii_down] = 2
-                ox = OxidationAssignment(
+                ox = _OxidationAssignment(
                     assignments=ox_map,
                     description=_describe_oxidation_assignment(
                         [ox_map[i] for i in range(4)], cluster_info.metals
                     ),
                 )
                 site_label = "".join(str(i + 1) for i in sorted(minority_set))
-                iso = SpinIsomer(
+                iso = _SpinIsomer(
                     label=f"{family}-{site_label}",
                     spin_assignment=dict(spin_assignment),
                     n_minority=2,
@@ -1175,7 +1021,7 @@ def _generate_configs_chan_fe4s4(cluster_info: ClusterInfo) -> list[ElectronicCo
                     f"FeII_up={_metal_site_label(cluster_info, feii_up)},"
                     f"FeII_down={_metal_site_label(cluster_info, feii_down)}"
                 )
-                configs.append(ElectronicConfig(
+                configs.append(_ElectronicConfig(
                     spin_isomer=iso,
                     oxidation=ox,
                     d_orbital_assignments={},
@@ -1189,19 +1035,19 @@ def _generate_configs_chan_fe4s4(cluster_info: ClusterInfo) -> list[ElectronicCo
     return configs
 
 
-def _generate_configs_chan_femoco(cluster_info: ClusterInfo) -> list[ElectronicConfig]:
+def _generate_configs_chan_femoco(cluster_info: _ClusterInfo) -> list[_ElectronicConfig]:
     """Reproduce the 35 × 18 × 5^3 = 78750 LLDUC initial configurations."""
     fe_metals = cluster_info.metals[:7]
     configs = []
     config_id = 0
 
-    for minority in combinations(range(7), 3):
+    for minority in _combinations(range(7), 3):
         minority_set = frozenset(minority)
         majority = [i for i in range(7) if i not in minority_set]
         site_label = "".join(str(i + 1) for i in sorted(minority_set))
         family = _FEMOCO_FAMILY_BY_SET[site_label]
         spin_assignment = {i: (-1 if i in minority_set else +1) for i in range(7)}
-        iso = SpinIsomer(
+        iso = _SpinIsomer(
             label=f"{family}-{site_label}",
             spin_assignment=dict(spin_assignment),
             n_minority=3,
@@ -1210,20 +1056,20 @@ def _generate_configs_chan_femoco(cluster_info: ClusterInfo) -> list[ElectronicC
         )
 
         # For target Sz=3/2, Fe(II) sites must satisfy 2 majority + 1 minority.
-        for feii_majority in combinations(majority, 2):
-            for feii_minority in combinations(minority_set, 1):
+        for feii_majority in _combinations(majority, 2):
+            for feii_minority in _combinations(minority_set, 1):
                 feii_sites = set(feii_majority) | set(feii_minority)
                 ox_map = {i: (2 if i in feii_sites else 3) for i in range(7)}
-                ox = OxidationAssignment(
+                ox = _OxidationAssignment(
                     assignments=ox_map,
                     description=_describe_oxidation_assignment(
                         [ox_map[i] for i in range(7)], fe_metals
                     ),
                 )
                 d_sites = sorted(feii_sites)
-                for d_combo in product(range(5), repeat=3):
+                for d_combo in _product(range(5), repeat=3):
                     d_assign = {d_sites[k]: d_combo[k] for k in range(3)}
-                    configs.append(ElectronicConfig(
+                    configs.append(_ElectronicConfig(
                         spin_isomer=iso,
                         oxidation=ox,
                         d_orbital_assignments=d_assign,
@@ -1238,15 +1084,15 @@ def _generate_configs_chan_femoco(cluster_info: ClusterInfo) -> list[ElectronicC
 
 
 def _canonicalize_chan_fe2s2(
-    configs: list[ElectronicConfig],
-) -> tuple[list[ElectronicConfig], list[SpinIsomer], list[SpinIsomerFamily]]:
+    configs: list[_ElectronicConfig],
+) -> tuple[list[_ElectronicConfig], list[_SpinIsomer], list[_SpinIsomerFamily]]:
     spin_isomers = []
     families = []
     by_family = {}
     for cfg in configs:
         fam = cfg.spin_isomer.family
         if fam not in by_family:
-            iso = SpinIsomer(
+            iso = _SpinIsomer(
                 label=cfg.spin_isomer.label,
                 spin_assignment=dict(cfg.spin_isomer.spin_assignment),
                 n_minority=cfg.spin_isomer.n_minority,
@@ -1255,7 +1101,7 @@ def _canonicalize_chan_fe2s2(
             )
             by_family[fam] = iso
             spin_isomers.append(iso)
-            families.append(SpinIsomerFamily(
+            families.append(_SpinIsomerFamily(
                 label=fam,
                 n_minority=iso.n_minority,
                 isomers=[iso],
@@ -1265,8 +1111,8 @@ def _canonicalize_chan_fe2s2(
 
 
 def _canonicalize_chan_fe4s4(
-    configs: list[ElectronicConfig],
-) -> tuple[list[ElectronicConfig], list[SpinIsomer], list[SpinIsomerFamily]]:
+    configs: list[_ElectronicConfig],
+) -> tuple[list[_ElectronicConfig], list[_SpinIsomer], list[_SpinIsomerFamily]]:
     representatives = {
         "BS1": {0: +1, 1: +1, 2: -1, 3: -1},
         "BS2": {0: +1, 1: -1, 2: +1, 3: -1},
@@ -1275,7 +1121,7 @@ def _canonicalize_chan_fe4s4(
     spin_isomers = []
     families = []
     for family, spin_assignment in representatives.items():
-        iso = SpinIsomer(
+        iso = _SpinIsomer(
             label=family,
             spin_assignment=spin_assignment,
             n_minority=2,
@@ -1283,7 +1129,7 @@ def _canonicalize_chan_fe4s4(
             Sz=0.0,
         )
         spin_isomers.append(iso)
-        families.append(SpinIsomerFamily(
+        families.append(_SpinIsomerFamily(
             label=family,
             n_minority=2,
             isomers=[iso],
@@ -1293,8 +1139,8 @@ def _canonicalize_chan_fe4s4(
 
 
 def _canonicalize_literature_fe4s4_cubane(
-    configs: list[ElectronicConfig],
-) -> tuple[list[ElectronicConfig], list[SpinIsomer], list[SpinIsomerFamily]]:
+    configs: list[_ElectronicConfig],
+) -> tuple[list[_ElectronicConfig], list[_SpinIsomer], list[_SpinIsomerFamily]]:
     """Apply the standard 4Fe-4S cubane three-pairing family definition.
 
     This keeps the raw site-labeled patterns in the config list, but relabels
@@ -1308,7 +1154,7 @@ def _canonicalize_literature_fe4s4_cubane(
     spin_isomers = []
     families = []
     for family, spin_assignment in representatives.items():
-        iso = SpinIsomer(
+        iso = _SpinIsomer(
             label=family,
             spin_assignment=spin_assignment,
             n_minority=2,
@@ -1316,7 +1162,7 @@ def _canonicalize_literature_fe4s4_cubane(
             Sz=0.0,
         )
         spin_isomers.append(iso)
-        families.append(SpinIsomerFamily(
+        families.append(_SpinIsomerFamily(
             label=family,
             n_minority=2,
             isomers=[iso],
@@ -1333,7 +1179,7 @@ def _canonicalize_literature_fe4s4_cubane(
         )
         family = _FE4S4_CUBANE_FAMILY_BY_MINORITY[minority]
         old_label = cfg.spin_isomer.label
-        cfg.spin_isomer = SpinIsomer(
+        cfg.spin_isomer = _SpinIsomer(
             label=family,
             spin_assignment=dict(cfg.spin_isomer.spin_assignment),
             n_minority=cfg.spin_isomer.n_minority,
@@ -1348,13 +1194,13 @@ def _canonicalize_literature_fe4s4_cubane(
 
 
 def _canonicalize_chan_femoco(
-    configs: list[ElectronicConfig],
-) -> tuple[list[ElectronicConfig], list[SpinIsomer], list[SpinIsomerFamily]]:
+    configs: list[_ElectronicConfig],
+) -> tuple[list[_ElectronicConfig], list[_SpinIsomer], list[_SpinIsomerFamily]]:
     by_label = {}
     for cfg in configs:
         iso = cfg.spin_isomer
         if iso.label not in by_label:
-            by_label[iso.label] = SpinIsomer(
+            by_label[iso.label] = _SpinIsomer(
                 label=iso.label,
                 spin_assignment=dict(iso.spin_assignment),
                 n_minority=iso.n_minority,
@@ -1368,7 +1214,7 @@ def _canonicalize_chan_femoco(
         fam_map.setdefault(iso.family, []).append(iso)
     for family in sorted(fam_map):
         members = sorted(fam_map[family], key=lambda x: x.label)
-        families.append(SpinIsomerFamily(
+        families.append(_SpinIsomerFamily(
             label=family,
             n_minority=members[0].n_minority if members else 0,
             isomers=members,
@@ -1377,7 +1223,7 @@ def _canonicalize_chan_femoco(
     return configs, spin_isomers, families
 
 
-def _build_equivalence_maps(cluster_info: ClusterInfo) -> list[dict]:
+def _build_equivalence_maps(cluster_info: _ClusterInfo) -> list[dict]:
     """Build metal index permutation maps from equivalent site detection."""
     metals = cluster_info.metals
     n = len(metals)
@@ -1427,7 +1273,7 @@ def _build_equivalence_maps(cluster_info: ClusterInfo) -> list[dict]:
     group_perms = []
     for group in equiv_groups:
         perms = []
-        for p in permutations(range(len(group))):
+        for p in _permutations(range(len(group))):
             if any(p[i] != i for i in range(len(p))):
                 perm = {group[i]: group[p[i]] for i in range(len(group))}
                 perms.append(perm)
@@ -1437,7 +1283,7 @@ def _build_equivalence_maps(cluster_info: ClusterInfo) -> list[dict]:
         return group_perms[0]
 
     combined = []
-    for combo in product(*group_perms):
+    for combo in _product(*group_perms):
         merged = {}
         for p in combo:
             merged.update(p)
@@ -1445,7 +1291,7 @@ def _build_equivalence_maps(cluster_info: ClusterInfo) -> list[dict]:
     return combined
 
 
-def _config_key(cfg: ElectronicConfig) -> tuple:
+def _config_key(cfg: _ElectronicConfig) -> tuple:
     """Return a hashable canonical key for a config."""
     spin = tuple(sorted(cfg.spin_assignment.items()))
     if cfg.oxidation:
@@ -1456,7 +1302,7 @@ def _config_key(cfg: ElectronicConfig) -> tuple:
     return (spin, ox, d_orb)
 
 
-def _apply_permutation_key(cfg: ElectronicConfig, perm: dict) -> tuple:
+def _apply_permutation_key(cfg: _ElectronicConfig, perm: dict) -> tuple:
     """Apply a metal index permutation to a config, return canonical key."""
     new_spin = tuple(sorted(
         (perm.get(k, k), v) for k, v in cfg.spin_assignment.items()
@@ -1471,19 +1317,3 @@ def _apply_permutation_key(cfg: ElectronicConfig, perm: dict) -> tuple:
         (perm.get(k, k), v) for k, v in cfg.d_orbital_assignments.items()
     ))
     return (new_spin, new_ox, new_d)
-
-
-def _cost_recommendation(n_configs, total_cost, method):
-    """Generate a recommendation based on cost estimate."""
-    if method == "UHF" and n_configs < 1000:
-        return "Feasible — run all configurations."
-    elif method == "UHF" and n_configs < 100000:
-        return "Manageable — consider parallel execution."
-    elif method == "UCCSD" and n_configs < 100:
-        return "Feasible for coupled cluster."
-    elif method == "UCCSDT" and n_configs < 50:
-        return "Pushing limits — use FNO truncation."
-    elif method == "DMRG" and n_configs < 50:
-        return "DMRG feasible — ensure good orbital ordering."
-    else:
-        return "Very expensive — apply aggressive filtering."
